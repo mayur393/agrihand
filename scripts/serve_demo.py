@@ -35,17 +35,19 @@ VISUALIZER = (
 ANNOTATOR = ROOT / "scripts" / "annotate_replay.py"
 
 # Overlay: shrink the game, add a caption panel. Injected into <head>.
+# The visualizer mounts to #app (width:100%, height:100%, overflow:hidden),
+# so we shrink #app directly and pin a caption panel to the right.
 OVERLAY = r"""
 <style>
-  html, body { margin: 0; height: 100%; }
-  #kaggle-root { display: flex; height: 100vh; }
-  /* shrink the visualizer's game column */
-  #kaggle-game { flex: 0 0 55%; min-width: 380px; overflow: auto; }
-  /* caption panel */
+  /* shrink the game to ~55% of viewport width */
+  #app { width: 55% !important; }
+  /* caption panel pinned right */
   #kaggle-captions {
-    flex: 1; overflow-y: auto; padding: 16px 18px;
+    position: fixed; top: 0; right: 0; bottom: 0; width: 45%;
+    overflow-y: auto; padding: 16px 18px; box-sizing: border-box;
     font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
     background: #0f1115; color: #d7dae0; border-left: 1px solid #2a2e37;
+    z-index: 99999;
   }
   #kaggle-captions h1 { font-size: 15px; margin: 0 0 4px; color: #fff; }
   #kaggle-captions .sub { color: #8b90a0; font-size: 12px; margin-bottom: 14px; }
@@ -58,68 +60,69 @@ OVERLAY = r"""
   #kaggle-captions .shops { color: #9ee6a1; }
   #kaggle-captions .empty { color: #6b7080; font-style: italic; }
 </style>
-<div id="kaggle-root">
-  <div id="kaggle-game"></div>
-  <div id="kaggle-captions"></div>
-</div>
+<div id="kaggle-captions"><div class="empty">Loading captions…</div></div>
 <script>
 (function () {
-  // move the game into the shrunk column
-  function moveGame() {
-    var el = document.querySelector('#root, #app, .game, main, [class*="game"]');
-    if (!el) return;
-    document.getElementById('kaggle-game').appendChild(el);
-  }
-  var c = document.getElementById('kaggle-captions');
-  var ann = null;
-  function setStep(step) {
-    if (!ann || !ann[step]) return;
-    var d = ann[step];
-    var html = '<h1>Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + '</h1>';
-    html += '<div class="sub">Actions this turn (per Kaggriculture rules)</div>';
-    d.players.forEach(function (p, i) {
-      html += '<div class="player">' + (i === 0 ? '▶ ' : '◀ ') + p.name +
-              ' — <span class="money">$' + Math.round(p.money) + '</span></div>';
-      if (!p.caption.length) { html += '<div class="empty">no action</div>'; return; }
-      html += '<ul>';
-      p.caption.forEach(function (x) { html += '<li>' + x + '</li>'; });
-      html += '</ul>';
-    });
-    html += '<div class="prices"><div class="player" style="margin-top:0">Market prices</div>';
-    Object.keys(d.prices).forEach(function (k) {
-      html += '<span>' + k.charAt(0) + k.slice(1).toLowerCase() + ': $' + d.prices[k] + '</span>';
-    });
-    if (d.shops.length) {
-      html += '<div class="shops">Open shops: ' + d.shops.join(', ') + '</div>';
-    } else {
-      html += '<div class="shops">No town shops open yet</div>';
-    }
-    html += '</div>';
-    c.innerHTML = html;
-  }
-  // poll for the app + read annotations from window.__kaggle_annotations__
-  var tries = 0;
-  (function poll() {
-    ann = window.__kaggle_annotations__ || null;
-    var el = document.querySelector('#root, #app, .game, main, [class*="game"]');
-    if (ann && el) {
-      // hook into the visualizer's currentStep if it exposes it
-      var w = el.__kaggle && el.__kaggle.step !== undefined ? el.__kaggle.step : 0;
-      setStep(0);
-      // try to observe a step counter: the bundle sets window.kaggle.step via message
-      window.addEventListener('message', function (e) {
-        if (e.data && typeof e.data.step === 'number') setStep(e.data.step);
-      });
-      // fallback: poll a known step element
-      setInterval(function () {
-        var s = document.querySelector('[class*="step"]');
-        if (s) {
-          var v = parseInt(s.textContent, 10);
-          if (!isNaN(v)) setStep(v);
+  function boot() {
+    var c = document.getElementById('kaggle-captions');
+    if (!c) return;
+    var ann = window.__kaggle_annotations__ || null;
+
+    // The bundle updates .turn-total with the current STEP (day*turns+hour),
+    // and .day-total with the day — prefer .turn-total for exact sync.
+    function currentStep() {
+      var el = document.querySelector('.market-header .turn-total, .turn-total');
+      if (el) {
+        var m = (el.textContent || '').match(/\d+/);
+        if (m) return parseInt(m[0], 10);
+      }
+      var els = document.querySelectorAll('*');
+      for (var i = 0; i < els.length; i++) {
+        if (/turn-total|turn-value/.test(els[i].className || '') && els[i].textContent) {
+          var mm = (els[i].textContent || '').match(/\d+/);
+          if (mm) return parseInt(mm[0], 10);
         }
-      }, 300);
-    } else if (tries++ < 100) { setTimeout(poll, 100); }
-  })();
+      }
+      return 0;
+    }
+
+    function render() {
+      if (!ann) { c.innerHTML = '<div class="empty">No annotations found.</div>'; return; }
+      var step = currentStep();
+      var d = ann[step];
+      if (!d) return;
+      var html = '<h1>Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + '</h1>';
+      html += '<div class="sub">Actions this turn (per Kaggriculture rules)</div>';
+      d.players.forEach(function (p, i) {
+        html += '<div class="player">' + (i === 0 ? '▶ ' : '◀ ') + p.name +
+                ' — <span class="money">$' + Math.round(p.money) + '</span></div>';
+        if (!p.caption.length) { html += '<div class="empty">no action</div>'; return; }
+        html += '<ul>';
+        p.caption.forEach(function (x) { html += '<li>' + x + '</li>'; });
+        html += '</ul>';
+      });
+      html += '<div class="prices"><div class="player" style="margin-top:0">Market prices</div>';
+      Object.keys(d.prices || {}).forEach(function (k) {
+        html += '<span>' + k.charAt(0) + k.slice(1).toLowerCase() + ': $' + d.prices[k] + '</span>';
+      });
+      html += '<div class="shops">Open shops: ' + ((d.shops || []).length ? d.shops.join(', ') : 'none yet') + '</div>';
+      html += '</div>';
+      c.innerHTML = html;
+    }
+
+    var last = -1;
+    render();
+    setInterval(function () {
+      var s = currentStep();
+      if (s !== last || !c.innerHTML) { last = s; render(); }
+    }, 250);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
 })();
 </script>
 """
