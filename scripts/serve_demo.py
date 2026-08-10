@@ -79,6 +79,7 @@ OVERLAY = r"""
     <button id="ks-play">⏸</button>
     <label>speed</label>
     <select id="ks-speed">
+      <option value="4">0.25×</option>
       <option value="2">0.5×</option>
       <option value="1">1×</option>
       <option value="0.5">2×</option>
@@ -99,7 +100,8 @@ OVERLAY = r"""
     var slider = document.getElementById('ks-slider');
     var ann = window.__kaggle_annotations__ || null;
     var total = (ann ? ann.length : 1) - 1;
-    var step = 0, playing = true, intervalMs = 400;
+    var step = 0, playing = true;
+    var BASE_MS = 400; // 1× = 400ms per step
     slider.max = total;
 
     function render() {
@@ -125,28 +127,42 @@ OVERLAY = r"""
 
     function post() { window.postMessage({ step: step }, '*'); render(); }
 
+    function intervalMs() {
+      // speed select value is a multiplier (0.25 = slowest/4x time, 4 = fastest)
+      return BASE_MS * parseFloat(speedSel.value);
+    }
+
+    var timer = null;
     function tick() {
       if (playing) {
         step = step >= total ? 0 : step + 1;
         post();
       }
+      timer = setTimeout(tick, intervalMs());
+    }
+    function start() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(tick, intervalMs());
+    }
+    function stop() {
+      if (timer) { clearTimeout(timer); timer = null; }
     }
 
     playBtn.addEventListener('click', function () {
       playing = !playing;
       playBtn.textContent = playing ? '⏸' : '▶';
-      if (playing) tick();
+      if (playing) start(); else stop();
     });
     speedSel.addEventListener('change', function () {
-      intervalMs = parseInt(speedSel.value, 10) * 200;
+      if (playing) start(); // reschedule with the new speed
     });
     slider.addEventListener('input', function () {
       step = parseInt(slider.value, 10);
       post();
     });
 
-    setInterval(tick, intervalMs);
     render();
+    start();
     // kick the board to step 0 with data
     window.postMessage({ step: 0 }, '*');
   }
