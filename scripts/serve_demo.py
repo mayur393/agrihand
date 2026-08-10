@@ -33,8 +33,11 @@ VISUALIZER = (
 )
 ANNOTATOR = ROOT / "scripts" / "annotate_replay.py"
 
-# Subtitle overlay: full-screen game + a thin caption bar at the bottom.
-# pointer-events:none so it never blocks clicks on the board.
+# Subtitle overlay. The bundled visualizer is a CHILD component: it renders
+# replay data and listens for postMessage({step:N}) from a parent controller
+# to advance playback (it does not self-play). So this overlay acts as the
+# parent: on an interval it posts {step:N} to advance the board, and syncs the
+# subtitle captions to the same N. pointer-events:none keeps the board usable.
 OVERLAY = r"""
 <style>
   #kaggle-subtitle {
@@ -50,6 +53,7 @@ OVERLAY = r"""
   #kaggle-subtitle .p1 { color: #ff8f8f; }
   #kaggle-subtitle .money { color: #ffd479; }
   #kaggle-subtitle .act { color: #e6e9ef; }
+  #kaggle-subtitle .paused { color: #9ee6a1; font-style: italic; }
 </style>
 <div id="kaggle-subtitle"><div class="head">Loading…</div></div>
 <script>
@@ -58,37 +62,30 @@ OVERLAY = r"""
     var c = document.getElementById('kaggle-subtitle');
     if (!c) return;
     var ann = window.__kaggle_annotations__ || null;
+    var total = (ann ? ann.length : 1) - 1;
+    var step = 0;
 
-    // The bundle updates .turn-total with the current STEP (day*turns+hour).
-    function currentStep() {
-      var el = document.querySelector('.market-header .turn-total, .turn-total');
-      if (el) {
-        var m = (el.textContent || '').match(/\d+/);
-        if (m) return parseInt(m[0], 10);
+    // The visualizer posts {ready:true} and {shareEpisode:{step:s}} to its
+    // parent (us). Track its reported step for perfect caption sync.
+    var reported = -1;
+    window.addEventListener('message', function (e) {
+      if (e.data && e.data.ready) { /* visualizer loaded */ }
+      if (e.data && e.data.shareEpisode && typeof e.data.shareEpisode.step === 'number') {
+        reported = e.data.shareEpisode.step;
       }
-      var els = document.querySelectorAll('*');
-      for (var i = 0; i < els.length; i++) {
-        if (/turn-total|turn-value/.test(els[i].className || '') && els[i].textContent) {
-          var mm = (els[i].textContent || '').match(/\d+/);
-          if (mm) return parseInt(mm[0], 10);
-        }
-      }
-      return 0;
-    }
+    });
 
     function render() {
       if (!ann) { c.innerHTML = '<div class="head">No annotations found.</div>'; return; }
-      var d = ann[currentStep()];
+      var d = ann[step];
       if (!d) return;
-      var html = '<div class="head">Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + '</div>';
-      var names = ['Player 1', 'Player 2'];
+      var html = '<div class="head">Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + ' / ' + total + '</div>';
       d.players.forEach(function (p, i) {
         var cls = i === 0 ? 'p0' : 'p1';
         var acts = p.caption.length ? p.caption.join(' · ') : 'no action';
         html += '<div class="' + cls + '">' + (i === 0 ? '▶ ' : '◀ ') + p.name +
                 ' <span class="money">$' + Math.round(p.money) + '</span> — <span class="act">' + acts + '</span></div>';
       });
-      // compact price line
       var prices = '';
       Object.keys(d.prices || {}).forEach(function (k) {
         prices += k.charAt(0) + k.slice(1).toLowerCase() + ' $' + d.prices[k] + '  ';
@@ -98,12 +95,20 @@ OVERLAY = r"""
       c.innerHTML = html;
     }
 
-    render();
-    var last = -1;
+    // Auto-play: advance step and push it to the visualizer every 250ms.
+    // Pause on hover, resume on leave (nice for inspecting a step).
     setInterval(function () {
-      var s = currentStep();
-      if (s !== last || !c.innerHTML) { last = s; render(); }
+      step = (step + 1) % (total + 1);
+      window.postMessage({ step: step }, '*');
+      render();
     }, 250);
+    c.style.pointerEvents = 'auto';
+    var paused = false;
+    c.addEventListener('mouseenter', function () { paused = true; });
+    c.addEventListener('mouseleave', function () { paused = false; });
+    // overlay interval runs regardless; keep it simple: captions follow the
+    // step we drive, and the board advances with it.
+    render();
   }
 
   if (document.readyState === 'loading') {
