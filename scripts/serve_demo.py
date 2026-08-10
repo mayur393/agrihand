@@ -33,18 +33,21 @@ VISUALIZER = (
 )
 ANNOTATOR = ROOT / "scripts" / "annotate_replay.py"
 
-# Subtitle overlay. The bundled visualizer is a CHILD component: it renders
-# replay data and listens for postMessage({step:N}) from a parent controller
-# to advance playback (it does not self-play). So this overlay acts as the
-# parent: on an interval it posts {step:N} to advance the board, and syncs the
-# subtitle captions to the same N. pointer-events:none keeps the board usable.
+# Subtitle overlay with playback controls. The bundled visualizer does NOT
+# self-play in a standalone page: it renders and waits for a parent to send
+# postMessage({step:N}). So this overlay IS the playback controller:
+#   - a timer advances `step` (speed-selectable), posting {step} to the board,
+#   - play/pause toggles the timer,
+#   - a range slider scrubs the step,
+#   - captions render from the same `step` in lockstep.
+# The bar is non-interactive (pointer-events:none) except the controls row.
 OVERLAY = r"""
 <style>
   #kaggle-subtitle {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 10px;
-    max-width: 94%; box-sizing: border-box; z-index: 99999;
-    background: rgba(0, 0, 0, 0.78); color: #f2f4f8;
-    border-radius: 8px; padding: 8px 14px;
+    width: min(94%, 1100px); box-sizing: border-box; z-index: 99999;
+    background: rgba(10, 12, 16, 0.88); color: #f2f4f8;
+    border-radius: 10px; padding: 8px 14px 10px;
     font: 12.5px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
     text-align: left; pointer-events: none;
   }
@@ -53,33 +56,57 @@ OVERLAY = r"""
   #kaggle-subtitle .p1 { color: #ff8f8f; }
   #kaggle-subtitle .money { color: #ffd479; }
   #kaggle-subtitle .act { color: #e6e9ef; }
-  #kaggle-subtitle .paused { color: #9ee6a1; font-style: italic; }
+  #kaggle-subtitle .ctrls {
+    display: flex; align-items: center; gap: 10px; margin-top: 6px;
+    padding-top: 6px; border-top: 1px solid #2a2e37; pointer-events: auto;
+  }
+  #kaggle-subtitle .ctrls button {
+    background: #263041; color: #eef1f6; border: 1px solid #3a4458; border-radius: 6px; padding: 3px 12px;
+    font-size: 12px; cursor: pointer;
+  }
+  #kaggle-subtitle .ctrls button:hover { background: #33415c; }
+  #kaggle-subtitle .ctrls input[type=range] { flex: 1; }
+  #kaggle-subtitle .ctrls label { font-size: 11px; color: #9aa3b2; }
+  #kaggle-subtitle .ctrls select {
+    background: #263041; color: #eef1f6; border: 1px solid #3a4458;
+    border-radius: 6px; font-size: 12px; padding: 2px 4px;
+  }
 </style>
-<div id="kaggle-subtitle"><div class="head">Loading…</div></div>
+<div id="kaggle-subtitle">
+  <div class="head" id="ks-head">Loading…</div>
+  <div id="ks-body"></div>
+  <div class="ctrls">
+    <button id="ks-play">⏸</button>
+    <label>speed</label>
+    <select id="ks-speed">
+      <option value="2">0.5×</option>
+      <option value="1">1×</option>
+      <option value="0.5">2×</option>
+      <option value="0.25">4×</option>
+    </select>
+    <input type="range" id="ks-slider" min="0" max="100" value="0">
+  </div>
+</div>
 <script>
 (function () {
   function boot() {
-    var c = document.getElementById('kaggle-subtitle');
-    if (!c) return;
+    var root = document.getElementById('kaggle-subtitle');
+    if (!root) return;
+    var head = document.getElementById('ks-head');
+    var body = document.getElementById('ks-body');
+    var playBtn = document.getElementById('ks-play');
+    var speedSel = document.getElementById('ks-speed');
+    var slider = document.getElementById('ks-slider');
     var ann = window.__kaggle_annotations__ || null;
     var total = (ann ? ann.length : 1) - 1;
-    var step = 0;
-
-    // The visualizer posts {ready:true} and {shareEpisode:{step:s}} to its
-    // parent (us). Track its reported step for perfect caption sync.
-    var reported = -1;
-    window.addEventListener('message', function (e) {
-      if (e.data && e.data.ready) { /* visualizer loaded */ }
-      if (e.data && e.data.shareEpisode && typeof e.data.shareEpisode.step === 'number') {
-        reported = e.data.shareEpisode.step;
-      }
-    });
+    var step = 0, playing = true, intervalMs = 400;
+    slider.max = total;
 
     function render() {
-      if (!ann) { c.innerHTML = '<div class="head">No annotations found.</div>'; return; }
-      var d = ann[step];
-      if (!d) return;
-      var html = '<div class="head">Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + ' / ' + total + '</div>';
+      var d = ann && ann[step];
+      if (!d) { head.textContent = 'Loading…'; return; }
+      head.textContent = 'Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + ' / ' + total;
+      var html = '';
       d.players.forEach(function (p, i) {
         var cls = i === 0 ? 'p0' : 'p1';
         var acts = p.caption.length ? p.caption.join(' · ') : 'no action';
@@ -92,23 +119,36 @@ OVERLAY = r"""
       });
       html += '<div class="act">' + prices + '| shops: ' +
               ((d.shops || []).length ? d.shops.join(', ') : 'none') + '</div>';
-      c.innerHTML = html;
+      body.innerHTML = html;
+      slider.value = step;
     }
 
-    // Auto-play: advance step and push it to the visualizer every 250ms.
-    // Pause on hover, resume on leave (nice for inspecting a step).
-    setInterval(function () {
-      step = (step + 1) % (total + 1);
-      window.postMessage({ step: step }, '*');
-      render();
-    }, 250);
-    c.style.pointerEvents = 'auto';
-    var paused = false;
-    c.addEventListener('mouseenter', function () { paused = true; });
-    c.addEventListener('mouseleave', function () { paused = false; });
-    // overlay interval runs regardless; keep it simple: captions follow the
-    // step we drive, and the board advances with it.
+    function post() { window.postMessage({ step: step }, '*'); render(); }
+
+    function tick() {
+      if (playing) {
+        step = step >= total ? 0 : step + 1;
+        post();
+      }
+    }
+
+    playBtn.addEventListener('click', function () {
+      playing = !playing;
+      playBtn.textContent = playing ? '⏸' : '▶';
+      if (playing) tick();
+    });
+    speedSel.addEventListener('change', function () {
+      intervalMs = parseInt(speedSel.value, 10) * 200;
+    });
+    slider.addEventListener('input', function () {
+      step = parseInt(slider.value, 10);
+      post();
+    });
+
+    setInterval(tick, intervalMs);
     render();
+    // kick the board to step 0 with data
+    window.postMessage({ step: 0 }, '*');
   }
 
   if (document.readyState === 'loading') {
