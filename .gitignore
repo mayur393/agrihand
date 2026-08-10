@@ -1,0 +1,10 @@
+# dev environment — never commit
+.venv/
+
+# downloaded competition data (replays, starter) — fetch via kaggle CLI
+data/raw/
+
+# runtime artifacts
+__pycache__/
+*.pyc
+/tmp/

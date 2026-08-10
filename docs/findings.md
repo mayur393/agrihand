@@ -4,8 +4,8 @@ Ground-truth mechanics, benchmark numbers, and researched limits. Every entry is
 
 ## 1. Engine & environment
 
-- [ ] `kaggle-environments` version pinned: `1.32.x` (exact TBD at install)
-- [ ] Local Python: 3.12 (host Python 3.14 is ahead of sim deps — see public repo setup notes)
+- [x] `kaggle-environments` version pinned: `1.32.6` (installed 2026-08-09 via `scripts/setup.sh`)
+- [x] Local Python: 3.12.13 (`/usr/bin/python3.12`; venv at `.venv`) — host Python 3.14 is ahead of sim deps (see public repo setup notes)
 
 ## 2. Timing benchmarks (TICKET-02)
 
