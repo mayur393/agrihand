@@ -6,9 +6,11 @@ the CLI, then serves the kaggle-environments visualizer HTML with the replay
 embedded as `window.kaggle.environment`.
 
 Usage:
-    .venv/bin/python scripts/serve_demo.py [--steps 720] [--port 8000] [--agent main.py] [--opponent random]
+    .venv/bin/python scripts/serve_demo.py [--steps 720] [--port 8000] [--agent agents/demo_hustler.py] [--opponent starter]
 
-Defaults: pass vs random for a quick visual check. Point --agent at main.py once v1 exists.
+Defaults: demo_hustler vs starter for a full 720-turn season showing hands,
+animals, fertilizer, land expansion, and market activity. Point --agent at
+main.py once v1 exists.
 """
 from __future__ import annotations
 
@@ -21,8 +23,9 @@ from pathlib import Path
 
 from kaggle_environments import make
 
+ROOT = Path(__file__).resolve().parent.parent
 VISUALIZER = (
-    Path(__file__).resolve().parent.parent
+    ROOT
     / ".venv/lib/python3.12/site-packages/kaggle_environments/envs/kaggriculture/visualizer/default/dist/index.html"
 )
 
@@ -41,8 +44,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--steps", type=int, default=720)
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--agent", default="pass")
-    ap.add_argument("--opponent", default="random")
+    ap.add_argument("--agent", default="agents/demo_hustler.py")
+    ap.add_argument("--opponent", default="starter")
     args = ap.parse_args()
 
     if not VISUALIZER.exists():
