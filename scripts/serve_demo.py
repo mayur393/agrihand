@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Serve a live kaggriculture match with per-step captions.
+"""Serve a live kaggriculture match with subtitle-style captions.
 
 Runs one episode (stdlib-only + kaggle_environments), annotates every step's
 actions into plain-language captions (scripts/annotate_replay.py), and serves
-the bundled visualizer with:
-  - the game board shrunk to ~55% width,
-  - a right-side caption panel showing each player's actions + market prices
-    for the current step, synced to the visualizer's playback.
+the bundled visualizer full-screen with a thin, semi-transparent subtitle bar
+at the bottom showing the current step's actions + market prices for both
+farms — like video subtitles. Read-only overlay; the game itself is untouched.
 
 Usage:
     .venv/bin/python scripts/serve_demo.py [--steps 720] [--port 8000]
@@ -34,42 +33,33 @@ VISUALIZER = (
 )
 ANNOTATOR = ROOT / "scripts" / "annotate_replay.py"
 
-# Overlay: shrink the game, add a caption panel. Injected into <head>.
-# The visualizer mounts to #app (width:100%, height:100%, overflow:hidden),
-# so we shrink #app directly and pin a caption panel to the right.
+# Subtitle overlay: full-screen game + a thin caption bar at the bottom.
+# pointer-events:none so it never blocks clicks on the board.
 OVERLAY = r"""
 <style>
-  /* shrink the game to ~55% of viewport width */
-  #app { width: 55% !important; }
-  /* caption panel pinned right */
-  #kaggle-captions {
-    position: fixed; top: 0; right: 0; bottom: 0; width: 45%;
-    overflow-y: auto; padding: 16px 18px; box-sizing: border-box;
-    font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: #0f1115; color: #d7dae0; border-left: 1px solid #2a2e37;
-    z-index: 99999;
+  #kaggle-subtitle {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 10px;
+    max-width: 94%; box-sizing: border-box; z-index: 99999;
+    background: rgba(0, 0, 0, 0.78); color: #f2f4f8;
+    border-radius: 8px; padding: 8px 14px;
+    font: 12.5px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    text-align: left; pointer-events: none;
   }
-  #kaggle-captions h1 { font-size: 15px; margin: 0 0 4px; color: #fff; }
-  #kaggle-captions .sub { color: #8b90a0; font-size: 12px; margin-bottom: 14px; }
-  #kaggle-captions .player { margin: 10px 0 6px; font-weight: 700; color: #6fb7ff; }
-  #kaggle-captions .money { color: #ffd479; font-weight: 600; }
-  #kaggle-captions ul { margin: 2px 0 6px; padding-left: 18px; }
-  #kaggle-captions li { margin: 2px 0; }
-  #kaggle-captions .prices { border-top: 1px solid #2a2e37; margin-top: 12px; padding-top: 8px; }
-  #kaggle-captions .prices span { display: inline-block; margin: 2px 10px 2px 0; }
-  #kaggle-captions .shops { color: #9ee6a1; }
-  #kaggle-captions .empty { color: #6b7080; font-style: italic; }
+  #kaggle-subtitle .head { color: #ffd479; font-weight: 600; margin-bottom: 2px; }
+  #kaggle-subtitle .p0 { color: #6fb7ff; }
+  #kaggle-subtitle .p1 { color: #ff8f8f; }
+  #kaggle-subtitle .money { color: #ffd479; }
+  #kaggle-subtitle .act { color: #e6e9ef; }
 </style>
-<div id="kaggle-captions"><div class="empty">Loading captions…</div></div>
+<div id="kaggle-subtitle"><div class="head">Loading…</div></div>
 <script>
 (function () {
   function boot() {
-    var c = document.getElementById('kaggle-captions');
+    var c = document.getElementById('kaggle-subtitle');
     if (!c) return;
     var ann = window.__kaggle_annotations__ || null;
 
-    // The bundle updates .turn-total with the current STEP (day*turns+hour),
-    // and .day-total with the day — prefer .turn-total for exact sync.
+    // The bundle updates .turn-total with the current STEP (day*turns+hour).
     function currentStep() {
       var el = document.querySelector('.market-header .turn-total, .turn-total');
       if (el) {
@@ -87,31 +77,29 @@ OVERLAY = r"""
     }
 
     function render() {
-      if (!ann) { c.innerHTML = '<div class="empty">No annotations found.</div>'; return; }
-      var step = currentStep();
-      var d = ann[step];
+      if (!ann) { c.innerHTML = '<div class="head">No annotations found.</div>'; return; }
+      var d = ann[currentStep()];
       if (!d) return;
-      var html = '<h1>Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + '</h1>';
-      html += '<div class="sub">Actions this turn (per Kaggriculture rules)</div>';
+      var html = '<div class="head">Day ' + d.day + ' · Hour ' + d.hour + ' · Step ' + d.step + '</div>';
+      var names = ['Player 1', 'Player 2'];
       d.players.forEach(function (p, i) {
-        html += '<div class="player">' + (i === 0 ? '▶ ' : '◀ ') + p.name +
-                ' — <span class="money">$' + Math.round(p.money) + '</span></div>';
-        if (!p.caption.length) { html += '<div class="empty">no action</div>'; return; }
-        html += '<ul>';
-        p.caption.forEach(function (x) { html += '<li>' + x + '</li>'; });
-        html += '</ul>';
+        var cls = i === 0 ? 'p0' : 'p1';
+        var acts = p.caption.length ? p.caption.join(' · ') : 'no action';
+        html += '<div class="' + cls + '">' + (i === 0 ? '▶ ' : '◀ ') + p.name +
+                ' <span class="money">$' + Math.round(p.money) + '</span> — <span class="act">' + acts + '</span></div>';
       });
-      html += '<div class="prices"><div class="player" style="margin-top:0">Market prices</div>';
+      // compact price line
+      var prices = '';
       Object.keys(d.prices || {}).forEach(function (k) {
-        html += '<span>' + k.charAt(0) + k.slice(1).toLowerCase() + ': $' + d.prices[k] + '</span>';
+        prices += k.charAt(0) + k.slice(1).toLowerCase() + ' $' + d.prices[k] + '  ';
       });
-      html += '<div class="shops">Open shops: ' + ((d.shops || []).length ? d.shops.join(', ') : 'none yet') + '</div>';
-      html += '</div>';
+      html += '<div class="act">' + prices + '| shops: ' +
+              ((d.shops || []).length ? d.shops.join(', ') : 'none') + '</div>';
       c.innerHTML = html;
     }
 
-    var last = -1;
     render();
+    var last = -1;
     setInterval(function () {
       var s = currentStep();
       if (s !== last || !c.innerHTML) { last = s; render(); }
