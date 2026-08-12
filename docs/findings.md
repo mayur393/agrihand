@@ -87,6 +87,19 @@ Retroactive application: rows in §4 are now answered (2026-08-12, RM-009). Disc
 - **M7**: rules-doc assumption "stockpiling on farmer/hand inventories does not bypass the cap" is **wrong** — units carry unlimited items mid-day; only shed capacity (100) binds. TICKET-07's premise overturned; recorded in docs/plan.md.
 - **M8**: plan's "(5,4) always" is a simplification — first hand spawns at first FREE shed-access tile in NWSE order. Not a contradiction, but a precision fix.
 
-## 7. Open questions → resolve in env source before relying on them
+## 7. Real-match observations (replays / ladder data — soft priors, not distributions)
+
+Single-match snapshots from actual leaderboard play. **One match is a prior, not a distribution** — do not override a tournament A/B with a single replay. Use to sanity-check strategy direction, never to decide promotions.
+
+### 2026-08-13 — top-bracket replay (winner カワシギ 3198 vs Filip Strzałka 3157)
+
+- Winner ~115,872 coins vs loser ~109,988 — both ~$110k, a full season's economy. v1's ~$4.7k is the floor, not a comparison.
+- **Margin was tiny relative to wealth** (~$5.9k on ~$110k, ~5%) — consistent with win/loss-first: at high skill the winner just needs to exist, not dominate. Low-variance defensive play is correct.
+- **Both farms animal-saturated** (dozens of sheep/cows/geese visible, few crops). Loser looked more animal-dense than winner → raw animal count isn't the differentiator; execution/timing (feed/care/harvest rhythm) likely is.
+- **Both bought all 3 quadrants** — full board coverage by day 30 is standard among top bots. This is a soft prior *for* land expansion at scale — but it does NOT contradict RM-015's A/B (land-ON loses for a SINGLE farmer with no labor to work extra tiles). Reconciliation: land pays off only when the farm has the units to work it (RM-016 hands + RM-019 animals). Re-test land ON-vs-OFF at RM-016.
+- **Weeds visible even at top tier** — no bot achieves zero weeds; DIG stays a real task.
+- Per-tile numbered badges = UI sugar over the same tile data we read from obs (yield/fertilizer counts) — no new mechanics.
+
+## 8. Open questions → resolve in env source before relying on them
 
 - (grows as development proceeds; each becomes a row in §4 once answered)
