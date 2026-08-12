@@ -3,7 +3,7 @@
 
 Runs four checks against main.py/config.py before they ship. Any failure exits 1.
 
-  1. LAST-CALLABLE (new, from RM-012 discovery): kaggle_environments loads the
+  1. LAST-CALLABLE (from RM-012 discovery): kaggle_environments loads the
      submission by exec() and picks the agent as
      `[v for v in env.values() if callable(v)][-1]` — the LAST callable defined
      in the module. If a helper function is defined after `agent`, the engine
@@ -11,17 +11,23 @@ Runs four checks against main.py/config.py before they ship. Any failure exits 1
      engine's exact selection and asserts it resolves to the intended `agent`
      function — converting the silent failure into a hard pre-submit error.
 
-  2. NO-NETWORK: grep for network imports/calls (requests, urllib, socket,
+  2. AGENT-SIGNATURE (from RM-015 discovery): the engine calls
+     agent(observation, configuration) with TWO positional args. A one-arg
+     signature silently feeds configuration into whatever the 2nd param is
+     (e.g. config dict landed in `buy_land` — truthy, silently enabled land
+     buying). Asserts agent() accepts >= 2 positional params.
+
+  3. NO-NETWORK: grep for network imports/calls (requests, urllib, socket,
      http.client, httpx, aiohttp, ftplib, smtplib, telnetlib, xmlrpc, urlopen,
      urlretrieve). Episodes have no network ingress/egress — a violating
      submission is void (rules-notes.md). Zero tolerance.
 
-  3. STDLIB-ONLY: every import in main.py/config.py must resolve from the
+  4. STDLIB-ONLY: every import in main.py/config.py must resolve from the
      Python standard library (or /kaggle_simulations/agent/ at runtime).
      This is checked at import time in an isolated subprocess so unresolved
      imports fail loudly here, not on the host.
 
-  4. ROOT-IMPORT: confirm config.py is importable from main.py's location when
+  5. ROOT-IMPORT: confirm config.py is importable from main.py's location when
      run standalone from a temp dir mimicking /kaggle_simulations/agent/ —
      catches path-resolution issues before the host does.
 
@@ -80,6 +86,42 @@ def check_last_callable(path: Path) -> list[str]:
             f"{path.name}: engine's last-callable selection is '{picked}', not 'agent'. "
             f"A helper is defined after agent() — the engine will silently run '{picked}' "
             f"as the agent. Move all helpers BEFORE agent()."
+        ]
+    return []
+
+
+def check_agent_signature(path: Path) -> list[str]:
+    """Gate 2: agent() must accept (observation, configuration) — the engine
+    calls agent(*args) with BOTH positional args. A one-arg signature silently
+    feeds configuration into whatever the second param is (RM-015 found this:
+    config dict landed in buy_land, truthy dict silently enabled land buying).
+    """
+    import inspect
+    source = path.read_text(encoding="utf-8")
+    env: dict = {}
+    exec_dir = str(path.parent)
+    if exec_dir not in sys.path:
+        sys.path.insert(0, exec_dir)
+    try:
+        exec(compile(source, "<precheck-sig>", "exec"), env)  # noqa: S102
+    finally:
+        if exec_dir in sys.path:
+            sys.path.remove(exec_dir)
+    fn = env.get("agent")
+    if not callable(fn):
+        return [f"{path.name}: no agent() function found for signature check"]
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return []  # builtin/C — can't introspect, skip
+    params = list(sig.parameters.values())
+    positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    if len(positional) < 2:
+        return [
+            f"{path.name}: agent() takes {len(positional)} positional param(s) — "
+            f"the engine calls agent(observation, configuration) with TWO args. "
+            f"Add `configuration=None` as the 2nd param (RM-015 found this class "
+            f"of silent bug). signature={sig}"
         ]
     return []
 
@@ -173,6 +215,7 @@ def main() -> int:
 
     all_problems: list[str] = []
     all_problems += check_last_callable(main_path)
+    all_problems += check_agent_signature(main_path)
     all_problems += check_no_network([main_path, config_path])
     all_problems += check_stdlib_only([main_path, config_path])
     all_problems += check_root_import(main_path, config_path)
@@ -182,7 +225,7 @@ def main() -> int:
         for problem in all_problems:
             print(f"  - {problem}")
         return 1
-    print("[precheck] OK — last-callable, no-network, stdlib-only, root-import all pass.")
+    print("[precheck] OK — last-callable, agent-signature, no-network, stdlib-only, root-import all pass.")
     return 0
 
 

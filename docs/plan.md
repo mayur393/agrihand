@@ -54,3 +54,16 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 - **M7 refinement:** DROP now fires when it unblocks a harvest (yield > shed room) OR carry ≥ threshold — not just carry ≥ threshold (old v1 behavior let a full shed strand a harvestable crop).
 - **Benchmark:** 0.088 ms/call worst-ish single-farmer turn (20 scattered unwatered plants, corner start, BFS_MAX_STEPS=16) — logged findings §3, far under 100 ms budget. Re-benchmark at RM-016 when hands arrive.
 - **Per-unit structure:** `_assign_task(unit_pos, farm, private, day, board_size)` is position-parameterized — RM-016 (hired hands) reuses it per unit without rewrite.
+
+## 2026-08-13 — RM-015 land expansion A/B: REJECTED (single farmer)
+
+| Variant | Opponent | Games | Win rate | CI (LB, UB) | Decision |
+|---|---|---|---|---|---|
+| land-OFF (committed main.py, BUY_LAND=False) | starter | 80 paired (160 eps) | 1.000 | (0.977, 1.000) | **PROMOTE** |
+| land-ON (BUY_LAND=True) | starter | 80 paired (160 eps) | 0.000 | (0.000, 0.023) | **REJECT** |
+
+### Notes
+- **Decision: land expansion is NOT promoted.** For a single farmer, buying land (NE→SW→SE, reserve-buffer rule) is a catastrophic regression: the farmer spreads across 3 quadrants, walks instead of farming, and ends with less cash than a land-OFF agent. Land-OFF wins ~$4.5–4.9k vs starter's ~$3.5k; land-ON makes ~$1.6k.
+- **This is a scope decision, not a strategic conclusion** (per RM-012's note): a single farmer can't work more land than the NW field — the extra tiles just sit empty while the farmer wastes turns walking. **Revisit at RM-016 (hired hands) when there's labor to actually work the extra tiles.** The A/B harness + variants (`agents/v1_land_on.py`, `agents/v1_land_off.py`) stay for that re-test.
+- **CRITICAL engine-contract bug found during A/B:** the runner calls `agent(observation, configuration)` — TWO positional args. My RM-015 change made `agent(obs, buy_land=BUY_LAND)` — the engine's configuration dict landed in `buy_land`, and since a non-empty dict is truthy, land-buying was silently ENABLED in both "land-ON" and (initially) "land-OFF" runs. Fixed: `agent(obs, configuration=None, buy_land=BUY_LAND)`. **This is the second engine-contract failure (after last-callable) — both are silent, both caught by tournament results, neither caught by smoke (which only checks no-exception).** Worth adding a signature check to the precheck.
+- **Margin improvement:** committed land-OFF now makes ~$4.5–4.9k vs RM-014's ~$4.3k — the fix (configuration not landing in buy_land) also means the earlier RM-014 runs were accidentally land-ON-ish, so RM-014's true baseline was slightly lower. No regression; smoke --full 150/0.

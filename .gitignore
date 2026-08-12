@@ -8,3 +8,6 @@ data/raw/
 __pycache__/
 *.pyc
 /tmp/
+
+# submission bundle (rebuilt at submit time via precheck + tar)
+submission.tar.gz

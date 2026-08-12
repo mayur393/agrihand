@@ -186,6 +186,19 @@ assuming shared numbering.
 - Pinned order NE→SW→SE ($1k/$2k/$4k)
 - NE-first unlocks the (5,4) first-hire spawn tile
 - Cash reserve buffer before any purchase
+- STATUS: DONE — BUY_LAND added (pinned order, reserve buffer, M8-honest
+  comment: NE-first is the pinned order, NOT the disproven (5,4) spawn
+  claim). A/B tournament (2026-08-13): land-OFF 160/0 CI [0.977, 1.000]
+  PROMOTE vs land-ON 0/160 CI [0.000, 0.023] REJECT → **land NOT
+  promoted**; committed main.py stays BUY_LAND=False. Logged in
+  docs/plan.md as "land tested, no benefit at v1 scope, revisit at
+  RM-016 (hired hands) when there's labor to work extra tiles."
+  Variants agents/v1_land_{on,off}.py kept for that re-test.
+  CRITICAL find: engine calls agent(obs, configuration) — 2 args; a
+  one-arg signature silently fed config into buy_land (truthy dict).
+  Fixed agent(obs, configuration=None, buy_land=...). Smoke --full
+  150/0; committed main.py wins ~$4.5–4.9k vs starter (improved
+  vs RM-014 baseline once the config bug was fixed).
 
 ### RM-016 — Farm Hand Hiring
 - Trigger once task backlog exceeds farmer capacity

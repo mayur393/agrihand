@@ -31,7 +31,10 @@ from collections import deque
 
 from config import (
     BFS_MAX_STEPS,
+    CASH_RESERVE_BUFFER,
     CROPS,
+    LAND_ORDER,
+    LAND_PRICES,
     PRICE_FLOOR,
     SEED_COSTS,
     SHED_CAPACITY,
@@ -47,9 +50,12 @@ V1_CROPS = ("WHEAT", "CARROT")
 # (M7: shed is the real constraint; don't let overflow hit the day-end discard).
 DROP_CARRY_THRESHOLD = 20
 
-# Plant only within this Chebyshev radius of the shed-access tile so
-# harvest→DROP→SELL cycles stay short. The farmer operates a small NW field.
-PLANT_RADIUS = 1
+# Land-expansion A/B switch (RM-015). OFF is the committed default: A/B
+# tournament (2026-08-13) proved a single farmer buying land LOSES to starter
+# (land-ON 0/160 CI [0.000, 0.023] vs land-OFF 160/0 CI [0.977, 1.000]) — the
+# farmer spreads too thin and walks instead of farming. Revisit at RM-016
+# (hired hands) when there's labor to actually work the extra tiles.
+BUY_LAND = False
 
 # Task priorities (RM-014). Higher = more urgent. FEED/HARVEST etc. that v1
 # doesn't use yet are present so the priority table is complete for RM-016+.
@@ -89,13 +95,18 @@ def _harvestable_yield(tile, day) -> int:
     return tile.get("yield_units", 0)
 
 
-def _in_field(pos: tuple[int, int], board_size: int) -> bool:
-    """True if `pos` is within the planned field (near the shed-access tile)."""
-    home = _shed_access_tile(board_size)
-    return max(abs(pos[0] - home[0]), abs(pos[1] - home[1])) <= PLANT_RADIUS
-    """First NW shed-access tile (the farmer's home), matching engine spawn."""
-    half = board_size // 2
-    return (half - 1, half - 1)  # NW: (4,4) on a 10x10 board
+def _in_field(pos: tuple[int, int], tiles) -> bool:
+    """True if `pos` is a plantable tile (unlocked, not LOCKED) near the shed.
+
+    The field is the set of unlocked tiles the farmer can work. Bought land is
+    included so expansion is actually usable (not just walked through), but
+    the single farmer still cycles the nearest-needs-first via BFS.
+    """
+    x, y = pos
+    t = tiles[y][x]
+    if t == "LOCKED":
+        return False
+    return True
 
 
 def _is_shed_adjacent(pos: tuple[int, int], board_size: int) -> bool:
@@ -208,9 +219,9 @@ def _assign_task(unit_pos, farm, private, day, board_size):
                 t = tiles[y][x]
                 p, task = _tile_task_priority(t, day, private, board_size)
                 if p == pri:
-                    # PLANT only within the planned field (near the shed) —
-                    # otherwise the farmer chases empty tiles across the board.
-                    if task == "PLANT" and not _in_field((x, y), board_size):
+                    # PLANT only on unlocked tiles (not LOCKED) — bought land is
+                    # workable, and BFS still picks the nearest empty tile first.
+                    if task == "PLANT" and not _in_field((x, y), tiles):
                         continue
                     targets.append((x, y, task))
         if not targets:
@@ -238,8 +249,8 @@ def _action_for_task(task):
     return ["PASS"]
 
 
-def _market_orders(me, private, market) -> list:
-    """Queue market orders: buy seeds, sell shed stock above buffer."""
+def _market_orders(me, private, market, buy_land=BUY_LAND) -> list:
+    """Queue market orders: buy seeds, sell shed stock above buffer, buy land."""
     orders: list = []
 
     # Buy seeds for the crops v1 plants, up to a small working stock.
@@ -260,10 +271,18 @@ def _market_orders(me, private, market) -> list:
         elif qty > 0 and market["prices"].get(item, PRICE_FLOOR) > PRICE_FLOOR:
             orders.append(["SELL", item, qty])
 
-    # NOTE: v1 does NOT buy land (RM-015's job). Land costs $3k for all three
-    # quadrants and v1 only farms the small NW field — expansion is a net cash
-    # drain until the field-farming loop scales to it. Removing it beats the
-    # starter by keeping cash productive instead of locked in idle land.
+    # Buy land: next quadrant in the PINNED order NE->SW->SE, when cash allows
+    # after keeping the reserve buffer.
+    #
+    # M8-honest note: NE-first is NOT because "a hand spawns at (5,4)" — that
+    # was a simplification (the real mechanic is first-free NWSE shed-access
+    # tile). NE is simply first in the engine's pinned LAND_ORDER, so we buy
+    # it first because the engine requires the order. No hand-spawn reasoning.
+    if buy_land:
+        n_extra = len(me["unlocked_quadrants"]) - 1  # NW is always there
+        if n_extra < len(LAND_ORDER) and me["money"] - LAND_PRICES[n_extra] >= CASH_RESERVE_BUFFER:
+            orders.append(["BUY_LAND"])
+
     return orders[:10]  # engine caps market orders per turn
 
 
@@ -280,8 +299,15 @@ def _step_toward(pos: tuple[int, int], target: tuple[int, int]) -> str:
     return "PASS"
 
 
-def agent(obs):
+def agent(obs, configuration=None, buy_land=BUY_LAND):
     """Return a valid per-turn action dict (RM-014 BFS task assignment).
+
+    ENGINE CONTRACT: the runner calls agent(observation, configuration) — TWO
+    positional args. `configuration` is the env config dict (ignored here);
+    it MUST be accepted or the engine's second arg lands in `buy_land` (a
+    non-empty dict is truthy, which silently enables land buying). `buy_land`
+    is a per-call override so A/B variants (RM-015) can disable expansion
+    without mutating the shared module; the submission default is BUY_LAND.
 
     Per turn:
       1. Build the farmer's market orders.
@@ -299,7 +325,7 @@ def agent(obs):
     fx, fy = me["farmer"]
     tile = me["tiles"][fy][fx]
 
-    market = _market_orders(me, private, obs["market"])
+    market = _market_orders(me, private, obs["market"], buy_land=buy_land)
 
     def _action(farmer_action):
         return {"farmer": farmer_action, "hands": [], "market": market}
