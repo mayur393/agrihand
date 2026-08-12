@@ -49,9 +49,10 @@ assuming shared numbering.
 ### RM-005 — Findings Enforcement Gate
 - eval/check_findings.py greps main.py/config.py for mechanic keywords
 - Fails smoke if a referenced mechanic's findings.md row is unresolved
-- STATUS: BUILT, NOT YET ENFORCED — main.py/config.py don't exist,
-  gate currently passes vacuously ("nothing to scan"). Self-activates
-  the moment v1 scaffolding lands (RM-013).
+- STATUS: DONE — non-vacuously enforced 2026-08-12: the placeholder
+  main.py's docstring (op vocabulary in prose) tripped M1/M2/M3/M4/M7/
+  M8/M10. Docstring trimmed to scaffold-only prose; gate kept strict.
+  Proof it catches even incidental references, not just logic.
 
 ### RM-006 — Tournament Runner + Promotion Rule
 - eval/tournament.py: paired, seeded, slot-swapped, --seed pinned so
@@ -61,7 +62,12 @@ assuming shared numbering.
 - Win-rate + 95% CI output (not fixed game count alone)
 - Promotion rule: only when CI lower bound clears 50%
 - Worked example logged in findings.md §5
-- STATUS: DONE (design + worked example verified)
+- STATUS: DONE — built and verified 2026-08-12 vs PASS placeholder:
+  vs `starter` REJECT (0/80, CI [0.000, 0.046]), vs `random` PROMOTE
+  (80/0, CI [0.954, 1.000]); same-seed rerun reproduces W/L/T exactly.
+  Rule discriminates correctly. Caveats logged in findings.md §5:
+  `random` is unseeded internally (smoke-only baseline) — `starter` is
+  the real v1 gate.
 
 ## EPIC 2 — GROUND TRUTH & MECHANICS VERIFICATION (fills in using Epic 1's harness)
 
@@ -74,10 +80,11 @@ assuming shared numbering.
 - Fast-gate vs full-gate smoke tier budgets
 - Per-turn/action timeout search on host docs
 - Worst-case BFS turn benchmark (target < ~100ms)
-- STATUS: PARTIAL — the single-720-turn-episode wall-clock benchmark
-  (findings.md §2) is still the one unfilled `___` in this section;
-  everything else in §2/§3 has a template and mitigation plan ready.
-  This is the next concrete number to capture.
+- STATUS: DONE — single-episode wall-clock 1.9 s vs starter logged
+  in findings.md §2 (2026-08-12); fast gate ~9 s / 9 ep, full gate
+  ~5 min / 150 ep observed. Tier budgets now grounded in real runs.
+  Remaining: worst-case BFS turn benchmark (needs v1 task logic) and
+  host timeout search (needs submission infra) — deferred, not blocking.
 
 ### RM-009 — Mechanic Micro-Tests (M1–M10)
 - Assert-based tests in eval/micro_tests.py (runs inside RM-004's harness)

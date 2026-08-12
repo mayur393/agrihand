@@ -60,9 +60,18 @@ Per-resource/per-side progress, so it isn't one opaque checkbox. Expected values
 
 ## 5. Promotion rule — CI worked example (TICKET-01)
 
-Logged from a real `eval/tournament.py` run once the harness exists:
+Logged from real `eval/tournament.py` runs (2026-08-12, PASS-placeholder candidate, 40 paired games, seed 1, 720 steps):
 
-- [ ] Example run showing CI narrowing as games increase (e.g. 22/40 → 55% LB≈0.40 not promotable; 30/40 → 75% LB≈0.60 promotable; 60/100 → 60% LB≈0.50 borderline). Target: a plot/table in `reports/` showing LB rising toward LB>0.50 as n grows.
+| Opponent | W/L/T | Win rate | Wilson 95% CI | Decision |
+|---|---|---|---|---|
+| `random` | 80/0/0 | 1.000 | [0.954, 1.000] | PROMOTE (LB > 0.50) |
+| `starter` | 0/80/0 | 0.000 | [0.000, 0.046] | REJECT (UB < 0.50) |
+
+The runner discriminates correctly: the same weak placeholder is promoted vs `random` and rejected vs `starter` — exactly the two CI extremes (LB > 0.50 and UB < 0.50) the promotion rule keys on. Reruns with identical `--seed` reproduce W/L/T exactly (verified twice).
+
+Caveat (verified 2026-08-12): the built-in `random` agent is *not* a weak baseline in the usual sense — it buys seeds/animals it can't use and ends with less banked coins than a PASS agent that just sits at $3,000, so PASS beats it 80/0. Treat `random` as a smoke target only; `starter` (deterministic carrot loop) is the real v1 gate. Also, `random` uses an unseeded per-step `random.Random()`, so it injects its own entropy on top of the seeded engine — `pass` and `starter` are fully seed-reproducible; `random` is reproducible only modulo its internal rolls.
+
+Sequential-rule worked examples (planned for the tuning window): 22/40 → 55% LB≈0.40 not promotable; 30/40 → 75% LB≈0.60 promotable; 60/100 → 60% LB≈0.50 borderline. Target: a plot/table in `reports/` showing LB rising toward LB>0.50 as n grows.
 
 ## 6. Discrepancy policy — engine vs. rules doc (TICKET-14)
 
