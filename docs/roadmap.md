@@ -117,6 +117,13 @@ assuming shared numbering.
 - Single source of truth for tunable thresholds
 - Imported by main.py and eval/tournament.py
 - Comments link each constant back to its PLAN.md justification
+- STATUS: DONE — verification pass 2026-08-12. All tunables referenced
+  in strategy.md/PLAN.md have matching commented constants. Added
+  missing single-source entries: `MARKET_PARAMS` (full price table),
+  `PRICE_FLOOR`, `SHED_CAPACITY` (M7 mirror + no-midday-cap doc note).
+  micro_tests.py now imports MARKET_PARAMS/PRICE_FLOOR from config
+  (duplicate killed). main.py imports config at RM-012; tournament.py
+  has no tunable dependence today (pure CLI runner — no dead import).
 
 ### RM-012 — Wheat/Carrot Loop (main.py v1)
 - Port plant→water→harvest→sell loop

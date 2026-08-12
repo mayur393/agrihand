@@ -57,3 +57,12 @@ Caveat documented for future tuning: **visible `yield_units` shows what is harve
 ## config.py purpose (TICKET-06)
 
 `config.py` is the single source of truth for all tunable strategy thresholds, imported by both `main.py` and `eval/tournament.py`. Every constant carries a comment linking back to the PLAN.md section that justifies it. Parameter sweeps edit one file — no literals buried in decision logic. Ships in the submission bundle (stdlib-only, so no import concerns on the host).
+
+## Inventory reality — M7 correction (verified 2026-08-12)
+
+**There is no mid-day cap on carried inventory** (engine `_apply_unit_action`: PICKUP/DROP/HARVEST impose no per-unit limit). The only constraint is **shed capacity (host `shedCapacity` = 100)**, enforced at DROP / PLACE-deposit / end-of-day auto-drop — and end-of-day auto-drop **discards overflow** (`_drop_inventories_to_shed`: moves up to capacity, discards the rest). Consequences for policy:
+
+- **The constraint moved from "mid-day per-unit cap" (TICKET-07's premise, overturned) to "end-of-day shed capacity + overflow discard" — and it's sharper.** A unit harvesting > (shed room) items into its carry in one day will silently lose the excess at day end.
+- **RM-012 / RM-018 must not over-harvest right before a day boundary.** Harvest quantity should be capped by *current shed room*, not just by carried capacity — e.g. harvest-then-drop cycles keep the shed draining, or harvest only as much as the shed can absorb before the end-of-day drop. This is a real loss mechanism, not a theoretical one.
+- **RM-014 (task assignment)**: a unit assigned to FEED must carry wheat *before* walking to the animal (M1 — FEED reads carried inventory only). "Carry wheat" is part of the FEED task itself, not an engine-provided precondition. Same for HARVEST→DROP: a harvester with a full carry must cycle back to the shed.
+- **M8 (spawn precision)**: first-hand spawn is the first FREE shed-access tile in NWSE order — (4,4) NW → (5,4) NE → (4,5) SW → (5,5) SE — so (5,4) only when free. The NE-early rationale survives (buying NE unlocks the tile the hand would otherwise land on locked), but "spawns at (5,4)" is a simplification: a hand standing there (or the farmer) pushes the spawn to the next free tile. NE-first expansion still holds as a strategy.
