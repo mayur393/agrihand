@@ -28,17 +28,17 @@ Ground-truth mechanics, benchmark numbers, and researched limits. Every entry is
 
 | # | Mechanic | Question | Keyword(s) in main.py/config.py | Answer (from env source) | Test |
 |---|---|---|---|---|---|
-| M1 | FEED wheat source | Does FEED consume from shed or carried inventory? | `FEED` | `___` | `test_feed_source()` |
-| M2 | HARVEST → SELL flow | Harvest goes to inventory; DROP to shed required before SELL (SELL reads shed)? | `HARVEST, DROP, SELL` | `___` | `test_harvest_drop_sell()` |
-| M3 | BUY_ANIMAL | Animal lands in shed? | `BUY_ANIMAL` | `___` | `test_buy_animal()` |
-| M4 | PLANT simultaneous consumption | All-or-nothing seed consumption when multiple units plant same turn? | `PLANT` | `___` | `test_plant_consumption()` |
-| M5 | Decay/weed timing | Exact turn plant becomes WEED (2 consecutive unwatered; seed day counts as first) | `consecutive_unwatered` | `___` | `test_weed_timing()` |
-| M6 | End-of-day auto-drop | Unit inventory auto-drops to shed at day end; overflow discarded? | `inventories` | `___` | `test_end_of_day_drop()` |
-| M7 | **Mid-day carried-inventory cap (TICKET-07)** | Is there a cap on farmer/hand carried items *before* end-of-day auto-drop? Spec: "stockpiling on farmer/hand inventories does not bypass the cap" → cap expected. | `PICKUP` | `___` (or "no cap") | `test_midday_inventory_cap()` |
-| M8 | First-hire spawn | First hand of the day spawns at (5,4) (locked NE quadrant)? | `HIRE` | `___` | `test_hire_spawn()` |
-| M9a | Price function — below target (TICKET-11) | `price(inv) = base + amp·f(|inv−I0|)` reproduces P(I0−T) for every resource | `prices` | `___` | `test_price_function_below(resource)` — parametrized over all 9 resources |
-| M9b | Price function — above target (TICKET-11) | `price(inv) = base − amp·f(|inv−I0|)` reproduces P(I0+T) and P(I0+2T) for every resource | `prices` | `___` | `test_price_function_above(resource)` — parametrized over all 9 resources |
-| M10 | Sell at $1 floor | At floor, unit sold but not added to market inventory (floor stays responsive)? | `SELL` | `___` | `test_price_floor()` |
+| M1 | FEED wheat source | Does FEED consume from shed or carried inventory? | `FEED` | Carried inventory only (`_inv_take(inv, "WHEAT", 1)`); shed NOT consulted. **Rules-doc says shed — engine authoritative.** | `test_feed_source()` |
+| M2 | HARVEST → SELL flow | Harvest goes to inventory; DROP to shed required before SELL (SELL reads shed)? | `HARVEST, DROP, SELL` | Yes. HARVEST adds to unit carried inventory; DROP (shed-adjacent only) deposits to shed; SELL reads `private["shed"]`. | `test_harvest_drop_sell()` |
+| M3 | BUY_ANIMAL | Animal lands in shed? | `BUY_ANIMAL` | Yes — lands in `private["shed"]` (obeys shedCapacity); PLACE takes from carried inventory onto a matching structure. | `test_buy_animal()` |
+| M4 | PLANT simultaneous consumption | All-or-nothing seed consumption when multiple units plant same turn? | `PLANT` | Yes — per-crop atomic gate: if total PLANT requests for a crop exceed available seeds, ALL are dropped (→ PASS), none partially consumed. | `test_plant_consumption()` |
+| M5 | Decay/weed timing | Exact turn plant becomes WEED (2 consecutive unwatered; seed day counts as first) | `consecutive_unwatered` | Planting day counts as unwatered (init `consecutive_unwatered: 1`); each unwatered daily refresh increments; `>= 2` → WEED. Watering resets to 0. | `test_weed_timing()` |
+| M6 | End-of-day auto-drop | Unit inventory auto-drops to shed at day end; overflow discarded? | `inventories` | Yes — `_drop_inventories_to_shed` moves ALL carried items to shed up to `shedCapacity` (default 100); overflow discarded. Seeds never in shed. | `test_end_of_day_drop()` |
+| M7 | **Mid-day carried-inventory cap (TICKET-07)** | Is there a cap on farmer/hand carried items *before* end-of-day auto-drop? Spec: "stockpiling on farmer/hand inventories does not bypass the cap" → cap expected. | `PICKUP` | **No cap.** Units can carry unlimited items mid-day; the only inventory limit is shed capacity (100), enforced at DROP/PLACE-deposit/end-of-day. **Rules-doc assumption wrong — stockpiling on units DOES bypass any cap until day end.** | `test_midday_inventory_cap()` |
+| M8 | First-hire spawn | First hand of the day spawns at (5,4) (locked NE quadrant)? | `HIRE` | Mostly — first hand spawns at first FREE shed-access tile in NWSE order: (4,4) NW → (5,4) NE → (4,5) SW → (5,5) SE, ties by min occupancy. Farmer occupies (4,4) at spawn, so first hand lands (5,4) — but only if free; a hand standing there pushes spawn to (4,5) etc. **Plan's "(5,4) always" is a simplification.** | `test_hire_spawn()` |
+| M9a | Price function — below target (TICKET-11) | `price(inv) = base + amp·f(|inv−I0|)` reproduces P(I0−T) for every resource | `prices` | `market_price()` implements exactly the rules-doc formula; below-target values match the documented P(I0−T) table (all 9 resources). | `test_price_function_below(resource)` — parametrized over all 9 resources |
+| M9b | Price function — above target (TICKET-11) | `price(inv) = base − amp·f(|inv−I0|)` reproduces P(I0+T) and P(I0+2T) for every resource | `prices` | `market_price()` above-target matches the documented P(I0+T)/P(I0+2T) table (all 9 resources). | `test_price_function_above(resource)` — parametrized over all 9 resources |
+| M10 | Sell at $1 floor | At floor, unit sold but not added to market inventory (floor stays responsive)? | `SELL` | Yes — `_commit_unit`: SELL at price > 1 adds 1 to market inventory; **at price == 1 (`PRICE_FLOOR`), sold unit does NOT add to market inventory** (prevents self-glut floor trap). | `test_price_floor()` |
 
 Add a row per new mechanic learned during development. **Policy must not rely on a mechanic whose row above is still blank — enforced by `eval/check_findings.py` (TICKET-10).**
 
@@ -48,15 +48,15 @@ Per-resource/per-side progress, so it isn't one opaque checkbox. Expected values
 
 | Resource | M9a below — P(I0−T) | M9b above — P(I0+T) | M9b above — P(I0+2T) | Status |
 |---|---|---|---|---|
-| WHEAT | 45 | 20 | 19 | ⬜ |
-| CARROT | 42 | 10 | 1 | ⬜ |
-| TOMATO | 84 | 24 | 9 | ⬜ |
-| STRAWBERRY | 204 | 1 | 1 | ⬜ |
-| MELON | 300 | 1 | 1 | ⬜ |
-| EGG | 70 | 40 | 39 | ⬜ |
-| MILK | 256 | 1 | 1 | ⬜ |
-| WOOL | 240 | 1 | 1 | ⬜ |
-| FERTILIZER | 140 | 60 | 20 | ⬜ |
+| WHEAT | 45 | 20 | 19 | ✅ |
+| CARROT | 42 | 10 | 1 | ✅ |
+| TOMATO | 84 | 24 | 9 | ✅ |
+| STRAWBERRY | 204 | 1 | 1 | ✅ |
+| MELON | 300 | 1 | 1 | ✅ |
+| EGG | 70 | 40 | 39 | ✅ |
+| MILK | 256 | 1 | 1 | ✅ |
+| WOOL | 240 | 1 | 1 | ✅ |
+| FERTILIZER | 140 | 60 | 20 | ✅ |
 
 ## 5. Promotion rule — CI worked example (TICKET-01)
 
@@ -82,7 +82,10 @@ Procedure:
 2. The §4 answer column + `main.py`/`config.py` reflect engine behavior; the note preserves the rules-doc discrepancy for future reference.
 3. If a discrepancy changes a policy assumption (e.g., M2's DROP-before-SELL flow), record the impact in `docs/plan.md`'s experiment log with the date.
 
-Retroactive application: at the time of writing, no rows in §4 are answered yet (all `___`), so no discrepancies are known — when each row is filled, this policy applies from the moment of filling.
+Retroactive application: rows in §4 are now answered (2026-08-12, RM-009). Discrepancies logged per procedure step 1 directly on the rows:
+- **M1**: rules doc says FEED pulls from shed; engine consumes from carried inventory. **Engine authoritative — policy adapted.**
+- **M7**: rules-doc assumption "stockpiling on farmer/hand inventories does not bypass the cap" is **wrong** — units carry unlimited items mid-day; only shed capacity (100) binds. TICKET-07's premise overturned; recorded in docs/plan.md.
+- **M8**: plan's "(5,4) always" is a simplification — first hand spawns at first FREE shed-access tile in NWSE order. Not a contradiction, but a precision fix.
 
 ## 7. Open questions → resolve in env source before relying on them
 

@@ -74,7 +74,9 @@ assuming shared numbering.
 ### RM-007 — Engine Source Audit
 - Locate installed kaggriculture env source
 - Confirm engine version + Python version in findings.md §1
-- STATUS: DONE
+- STATUS: DONE — source at .venv/lib/python3.12/site-packages/
+  kaggle_environments/envs/kaggriculture/kaggriculture.py (1073 lines);
+  engine 1.32.6, Python 3.12.13 logged in findings §1.
 
 ### RM-008 — Timing & Compute Benchmarks
 - Fast-gate vs full-gate smoke tier budgets
@@ -93,12 +95,21 @@ assuming shared numbering.
   acceptance criteria), hire spawn, price function (M9a/M9b split,
   per-resource), price floor behavior
 - Policy must not rely on a mechanic whose row is still blank
-- STATUS: DONE (structure + M9 split verified; values pending engine)
+- STATUS: DONE — all M1–M10 rows answered from engine source and
+  asserted in eval/micro_tests.py (2026-08-12, ALL PASS). Three
+  findings with strategy impact: M1 (FEED uses carried inventory,
+  not shed), M7 (NO mid-day carried cap — rules-doc assumption
+  overturned, TICKET-07), M8 (spawn is first-free NWSE tile, not
+  always (5,4)). Logged in findings §4/§6 + docs/plan.md. Price
+  table (M9a/M9b) fully verified ✅.
 
 ### RM-010 — Discrepancy Policy
 - Engine behavior authoritative over rules-doc text when they conflict
 - Log discrepancies per-row in findings.md, not silently
-- STATUS: DONE
+- STATUS: DONE — applied live at RM-009: M1 (FEED source), M7 (no
+  mid-day cap), M8 (spawn precision) logged on findings §4 rows +
+  §6 retroactive note + docs/plan.md entry. Procedure exercised, not
+  just stated.
 
 ## EPIC 3 — V1 CORE AGENT
 
