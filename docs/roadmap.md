@@ -41,7 +41,10 @@ assuming shared numbering.
 - eval/smoke.py --fast (short episodes, run every change)
 - eval/smoke.py --full (50 episodes × 3 built-ins @ 720 turns, pre-submit only)
 - Zero exceptions, zero invalid-action episodes required
-- STATUS: DONE (design), pending actual episode runs
+- STATUS: DONE — both tiers verified clean vs PASS placeholder
+  (2026-08-12: --fast 9 ep/0 fail ~9 s; --full 150 ep/0 fail ~5 min).
+  Findings gate (RM-005) passes; placeholder main.py trimmed so its
+  docstring doesn't trip unresolved-mechanic keywords before RM-012.
 
 ### RM-005 — Findings Enforcement Gate
 - eval/check_findings.py greps main.py/config.py for mechanic keywords

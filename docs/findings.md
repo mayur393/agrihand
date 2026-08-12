@@ -9,9 +9,9 @@ Ground-truth mechanics, benchmark numbers, and researched limits. Every entry is
 
 ## 2. Timing benchmarks (TICKET-02)
 
-- [ ] **Single 720-turn episode wall-clock** (vs `pass`, `random`, `starter`): `___ s` — logged at setup, drives the smoke-tier budgets below.
-- Fast gate (`smoke.py --fast`: 3 ep × 3 opponents @ 200 steps): expected `~___ s`
-- Full gate (`smoke.py --full`: 50 ep × 3 opponents @ 720 steps): expected `~___ min`
+- [x] **Single 720-turn episode wall-clock** (vs `pass`, `random`, `starter`): `1.9 s` vs `starter` (measured 2026-08-12, `.venv/bin/python`, PASS placeholder agent) — logged at setup, drives the smoke-tier budgets below.
+- Fast gate (`smoke.py --fast`: 3 ep × 3 opponents @ 200 steps): observed `~9 s` total (2026-08-12, 9 episodes, 0 failures)
+- Full gate (`smoke.py --full`: 50 ep × 3 opponents @ 720 steps): observed `~5 min` total (2026-08-12, 150 episodes, 0 failures)
 
 ## 3. Host per-turn compute limit (TICKET-03)
 
