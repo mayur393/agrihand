@@ -42,9 +42,9 @@ from config import (
     WHEAT_BUFFER_BASE,
 )
 
-# Crops v1 actually plants (wheat + carrot). The others exist in config for
-# later epics; keeping this explicit avoids accidental planting of premium
-# crops whose glut dynamics v1 doesn't manage yet (strategy.md §3.4).
+# Crops v1 plants by default (wheat + carrot). RM-017 A/Bs override this per
+# call via `crop_mix` to test tomato/melon additions without mutating the
+# module. The committed default stays the RM-016 promoted baseline.
 V1_CROPS = ("WHEAT", "CARROT")
 
 # Farmer walks to the shed to DROP when carrying at least this many items
@@ -175,7 +175,7 @@ def _bfs_nearest(start, tiles, board_size, is_target, max_steps=BFS_MAX_STEPS):
     return None
 
 
-def _tile_task_priority(tile, day, private, board_size) -> tuple[int, str]:
+def _tile_task_priority(tile, day, private, board_size, crop_mix=V1_CROPS) -> tuple[int, str]:
     """Highest-priority unmet task on a single tile, or (0, None).
 
     Priority (RM-014): WATER/FEED > HARVEST > COLLECT_FERTILIZER > CARE >
@@ -185,7 +185,7 @@ def _tile_task_priority(tile, day, private, board_size) -> tuple[int, str]:
         # PLANT on empty unlocked tile IF within the planned field (near the
         # shed). Chasing any empty tile with seed causes the farmer to wander
         # the whole board; the field is where harvest→DROP cycles are short.
-        if any(private["seeds"].get(c, 0) > 0 for c in V1_CROPS):
+        if any(private["seeds"].get(c, 0) > 0 for c in crop_mix):
             # field radius check happens in the caller via _in_field()
             return (_TASK_PRIORITY["PLANT"], "PLANT")
         return (0, None)
@@ -215,7 +215,7 @@ def _tile_task_priority(tile, day, private, board_size) -> tuple[int, str]:
     return (0, None)
 
 
-def _count_backlog(farm, private, day, board_size) -> int:
+def _count_backlog(farm, private, day, board_size, crop_mix=V1_CROPS) -> int:
     """Number of URGENT unmet tasks this turn (WATER/HARVEST/DIG — priority >= DIG).
 
     Used for the hire decision (RM-016). PLANT is excluded: every empty tile
@@ -227,13 +227,13 @@ def _count_backlog(farm, private, day, board_size) -> int:
     urgent = _TASK_PRIORITY["DIG"]  # DIG=3 and above are urgent
     for y in range(board_size):
         for x in range(board_size):
-            p, task = _tile_task_priority(tiles[y][x], day, private, board_size)
+            p, task = _tile_task_priority(tiles[y][x], day, private, board_size, crop_mix)
             if p >= urgent:
                 count += 1
     return count
 
 
-def _assign_task(unit_pos, farm, private, day, board_size):
+def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS):
     """Per-unit task assignment: nearest tile with the highest-priority unmet task.
 
     Structured to be reusable for hired hands (RM-016): takes a unit position
@@ -254,7 +254,7 @@ def _assign_task(unit_pos, farm, private, day, board_size):
         for y in range(board_size):
             for x in range(board_size):
                 t = tiles[y][x]
-                p, task = _tile_task_priority(t, day, private, board_size)
+                p, task = _tile_task_priority(t, day, private, board_size, crop_mix)
                 if p == pri:
                     # PLANT only on unlocked tiles (not LOCKED) — bought land is
                     # workable, and BFS still picks the nearest empty tile first.
@@ -286,12 +286,12 @@ def _action_for_task(task):
     return ["PASS"]
 
 
-def _market_orders(me, private, market, day, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10) -> list:
+def _market_orders(me, private, market, day, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10, crop_mix=V1_CROPS) -> list:
     """Queue market orders: buy seeds, sell shed stock, buy land, hire hands."""
     orders: list = []
 
-    # Buy seeds for the crops v1 plants, up to a small working stock.
-    for crop in V1_CROPS:
+    # Buy seeds for the crops in the mix, up to a small working stock.
+    for crop in crop_mix:
         if private["seeds"].get(crop, 0) == 0 and me["money"] >= SEED_COSTS[crop]:
             orders.append(["BUY_SEED", crop, 1])
 
@@ -326,7 +326,7 @@ def _market_orders(me, private, market, day, buy_land=BUY_LAND, hire_hands=HIRE_
     # hire up to MAX_HANDS_PER_DAY while the backlog stays high; the daily
     # cost of 1-2 hands ($1-2) is trivially cheap vs the extra actions.
     if hire_hands:
-        backlog = _count_backlog(me, private, day, board_size)
+        backlog = _count_backlog(me, private, day, board_size, crop_mix)
         if backlog > HIRE_THRESHOLD_TASKS and me["hires_today"] < MAX_HANDS_PER_DAY:
             orders.append(["HIRE"])  # one HIRE per turn; engine processes it
 
@@ -346,7 +346,7 @@ def _step_toward(pos: tuple[int, int], target: tuple[int, int]) -> str:
     return "PASS"
 
 
-def _unit_action(pos, farm, private, day, board_size, idx=0):
+def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS):
     """One unit's action (farmer or hand): act in place or move toward task.
 
     Shared by farmer + hands (RM-016). Returns a farmer/hand action list, e.g.
@@ -366,14 +366,14 @@ def _unit_action(pos, farm, private, day, board_size, idx=0):
             return ["DROP"]
         return [_step_toward(pos, _shed_access_tile(board_size))]
 
-    assigned = _assign_task(pos, farm, private, day, board_size)
+    assigned = _assign_task(pos, farm, private, day, board_size, crop_mix)
     if assigned is None:
         return ["PASS"]
 
     target, task, action_spec = assigned
     if target == pos:
         if task == "PLANT":
-            for crop in V1_CROPS:
+            for crop in crop_mix:
                 if private["seeds"].get(crop, 0) > 0:
                     return ["PLANT", crop]
             return ["PASS"]
@@ -381,7 +381,7 @@ def _unit_action(pos, farm, private, day, board_size, idx=0):
     return [_step_toward(pos, target)]
 
 
-def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS):
+def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, crop_mix=V1_CROPS):
     """Return a valid per-turn action dict (RM-016 farm hands).
 
     ENGINE CONTRACT: the runner calls agent(observation, configuration) — TWO
@@ -405,11 +405,13 @@ def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS):
 
     market = _market_orders(me, private, obs["market"], day,
                             buy_land=buy_land, hire_hands=hire_hands,
-                            board_size=board_size)
+                            board_size=board_size, crop_mix=crop_mix)
 
     farmer_action = _unit_action((me["farmer"][0], me["farmer"][1]),
-                                 me, private, day, board_size, idx=0)
-    hand_actions = [_unit_action((hx, hy), me, private, day, board_size, idx=i + 1)
+                                 me, private, day, board_size, idx=0,
+                                 crop_mix=crop_mix)
+    hand_actions = [_unit_action((hx, hy), me, private, day, board_size,
+                                 idx=i + 1, crop_mix=crop_mix)
                     for i, (hx, hy) in enumerate(me["hands"])]
 
     return {"farmer": farmer_action, "hands": hand_actions, "market": market}

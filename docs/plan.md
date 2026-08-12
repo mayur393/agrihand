@@ -87,3 +87,20 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 - **M1 (FEED carry wheat) is structurally moot until RM-019** — no animals means no FEED task is generated, so there's no carry-wheat precondition to enforce yet. Noted, not coded as dead logic.
 - **Backlog fix during dev:** `_count_backlog` initially counted every empty tile as a PLANT task → backlog always > threshold → hired hands every day, planting everywhere, bleeding money. Fixed to count only URGENT tasks (WATER/HARVEST/DIG, priority ≥ DIG). This is why the first hands-ON run lost ($3163) before the fix ($4545).
 - smoke --full 150/0; micro_tests ALL PASS.
+
+## 2026-08-13 — RM-017 crop diversification A/Bs: NEGATIVE (no benefit at v1 scope)
+
+**Two separate A/Bs (80 paired games each vs starter, seed 1):**
+
+| Variant | W/L/T | Win rate | CI (LB, UB) | Avg margin (8 seeds) |
+|---|---|---|---|---|
+| baseline (wheat/carrot) | 160/0 | 1.000 | (0.977, 1.000) | 1238 |
+| +tomato | 160/0 | 1.000 | (0.977, 1.000) | 1188 |
+| +melon | 160/0 | 1.000 | (0.977, 1.000) | 1158 |
+
+### Notes
+- **Neither tomato nor melon improves win rate OR margin.** All three variants win 160/0 (CI identical); margins are within seed noise (1238 vs 1188 vs 1158). The crop mix is NOT the bottleneck at v1's small single-farmer field.
+- **Why likely no help:** premium crops have higher seed cost (tomato $50, melon $80 vs wheat $10) and long lead times (8–10 days to first yield vs wheat/carrot 2 days). On a tiny field farmed by one farmer within a 30-day season, the delayed payoff doesn't beat the fast wheat/carrot cycle.
+- **Step 3 NOT run** (per RM-017 acceptance criterion): neither crop showed individual improvement, so no three-way crop+land+hands test. The "land+labor+crop" hypothesis has no individual signal to justify it; the prior two land rejections (RM-015/016) stand.
+- **Framing preserved for later:** a 0/160 land rejection twice means the next land attempt needs a genuinely different input mix. The replay's top-bracket crop/animal density remains the soft prior — but that scale likely needs animals (RM-019) + premium crop timing (RM-018), not just adding TOMATO/MELON to the existing loop.
+- Committed main.py stays baseline crop_mix=("WHEAT","CARROT"), BUY_LAND=False, HIRE_HANDS=False. smoke --full 150/0; no regression.

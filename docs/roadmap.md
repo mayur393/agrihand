@@ -220,6 +220,16 @@ assuming shared numbering.
 ### RM-017 — Crop Diversification (Tomato, Melon)
 - Ongoing vs one-time yield handling
 - Melon wave timed to town-demand troughs
+- STATUS: DONE — crop_mix parameter threaded through plant/task/market
+  logic (per-crop ongoing/one-time mechanics already engine-generic via
+  CROPS). Two separate A/Bs (80 paired games each vs starter, seed 1):
+  +tomato and +melon BOTH win 160/0 CI [0.977, 1.000] — same as
+  baseline — and margins are within seed noise (1238 baseline vs 1188
+  tomato vs 1158 melon over 8 seeds). NEGATIVE: neither crop improves
+  win rate or margin at v1's small single-farmer field. Step 3 (winning
+  crop + land + hands) NOT run per acceptance criterion — no individual
+  signal to justify it. Logged in docs/plan.md. Committed main.py stays
+  wheat/carrot baseline. smoke --full 150/0; no regression.
 
 ### RM-018 — Sale/Market Timing Policy
 - Premium goods (strawberry/melon/milk/wool): small batches, post-demand-tick
