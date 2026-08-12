@@ -203,6 +203,19 @@ assuming shared numbering.
 ### RM-016 — Farm Hand Hiring
 - Trigger once task backlog exceeds farmer capacity
 - Fibonacci daily cost awareness (1,1,2,3,5,8… resets daily)
+- STATUS: DONE — HIRE added (urgent-backlog trigger > HIRE_THRESHOLD_TASKS,
+  MAX_HANDS_PER_DAY=2, fibonacci-cost aware). Hands wired via shared
+  `_unit_action(pos, farm, private, day, board_size, idx)` — RM-014's
+  per-unit `_assign_task` needed NO hand-specific special-casing
+  (generality claim confirmed). M8: hands read from ACTUAL me["hands"]
+  positions each turn. M1 (FEED carry wheat) structurally moot until
+  RM-019 (no animals). 2x2 A/B (2026-08-13, 80 paired games each):
+  land is the dominant factor — OFF wins 160/0 CI [0.977, 1.000],
+  ON loses 0/160 regardless of hands. "Land+labor pays off" FALSIFIED
+  at v1 scope. Hands neutral (margin 1114 vs 1196 — noise, favors
+  no-hands). Promoted: (land OFF, hands OFF) = BUY_LAND=False,
+  HIRE_HANDS=False. Full table + backlog-fix story in docs/plan.md.
+  smoke --full 150/0; no regression.
 
 ### RM-017 — Crop Diversification (Tomato, Melon)
 - Ongoing vs one-time yield handling

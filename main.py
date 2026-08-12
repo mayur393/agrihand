@@ -33,6 +33,7 @@ from config import (
     BFS_MAX_STEPS,
     CASH_RESERVE_BUFFER,
     CROPS,
+    HIRE_THRESHOLD_TASKS,
     LAND_ORDER,
     LAND_PRICES,
     PRICE_FLOOR,
@@ -53,9 +54,21 @@ DROP_CARRY_THRESHOLD = 20
 # Land-expansion A/B switch (RM-015). OFF is the committed default: A/B
 # tournament (2026-08-13) proved a single farmer buying land LOSES to starter
 # (land-ON 0/160 CI [0.000, 0.023] vs land-OFF 160/0 CI [0.977, 1.000]) — the
-# farmer spreads too thin and walks instead of farming. Revisit at RM-016
-# (hired hands) when there's labor to actually work the extra tiles.
+# farmer spreads too thin and walks instead of farming. RM-016 re-tests this
+# WITH hired hands (the labor precondition) via a 2x2 A/B.
 BUY_LAND = False
+
+# Hand-hiring A/B switch (RM-016). 2x2 A/B (2026-08-13): both no-land arms
+# win 160/0 CI [0.977, 1.000]; hands add no measurable benefit at v1 scope
+# (avg margin 1114 with hands vs 1196 without over 6 seeds — noise). Land is
+# the only factor that matters, and it's decisively bad either way. Committed
+# default OFF (simpler, marginally better margin). Revisit with animals
+# (RM-019) when daily FEED/CARE tasks create a real labor need.
+HIRE_HANDS = False
+
+# Max hands hired per day. Fibonacci costs 1,1,2,3,5,8 — the 3rd+ hire is
+# where daily cost stops being trivially cheap; the plan targets 1-2 hands.
+MAX_HANDS_PER_DAY = 2
 
 # Task priorities (RM-014). Higher = more urgent. FEED/HARVEST etc. that v1
 # doesn't use yet are present so the priority table is complete for RM-016+.
@@ -121,9 +134,15 @@ def _shed_room(private) -> int:
     return max(0, SHED_CAPACITY - sum(private["shed"].values()))
 
 
-def _carried_total(private) -> int:
-    """Total items on the main farmer's carried inventory."""
-    return sum(private["inventories"][0].values()) if private["inventories"] else 0
+def _carried_total(private, idx=0) -> int:
+    """Total items on a unit's carried inventory (idx 0 = farmer, 1+ = hands).
+
+    Matches the engine's per-unit inventory slots (private["inventories"][idx]).
+    """
+    invs = private["inventories"]
+    if not invs or idx >= len(invs):
+        return 0
+    return sum(invs[idx].values())
 
 
 def _bfs_nearest(start, tiles, board_size, is_target, max_steps=BFS_MAX_STEPS):
@@ -196,6 +215,24 @@ def _tile_task_priority(tile, day, private, board_size) -> tuple[int, str]:
     return (0, None)
 
 
+def _count_backlog(farm, private, day, board_size) -> int:
+    """Number of URGENT unmet tasks this turn (WATER/HARVEST/DIG — priority >= DIG).
+
+    Used for the hire decision (RM-016). PLANT is excluded: every empty tile
+    is technically plantable, so counting it inflates the backlog to ~always
+    hire. The real signal is urgent care tasks the farmer can't clear alone.
+    """
+    count = 0
+    tiles = farm["tiles"]
+    urgent = _TASK_PRIORITY["DIG"]  # DIG=3 and above are urgent
+    for y in range(board_size):
+        for x in range(board_size):
+            p, task = _tile_task_priority(tiles[y][x], day, private, board_size)
+            if p >= urgent:
+                count += 1
+    return count
+
+
 def _assign_task(unit_pos, farm, private, day, board_size):
     """Per-unit task assignment: nearest tile with the highest-priority unmet task.
 
@@ -249,8 +286,8 @@ def _action_for_task(task):
     return ["PASS"]
 
 
-def _market_orders(me, private, market, buy_land=BUY_LAND) -> list:
-    """Queue market orders: buy seeds, sell shed stock above buffer, buy land."""
+def _market_orders(me, private, market, day, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10) -> list:
+    """Queue market orders: buy seeds, sell shed stock, buy land, hire hands."""
     orders: list = []
 
     # Buy seeds for the crops v1 plants, up to a small working stock.
@@ -283,6 +320,16 @@ def _market_orders(me, private, market, buy_land=BUY_LAND) -> list:
         if n_extra < len(LAND_ORDER) and me["money"] - LAND_PRICES[n_extra] >= CASH_RESERVE_BUFFER:
             orders.append(["BUY_LAND"])
 
+    # Hire hands when the task backlog exceeds what the farmer alone can clear
+    # (RM-016). Hands reset daily (engine clears hands + hires_today at day
+    # end), so this is a daily re-hire decision. Fibonacci cost: 1,1,2,3,5,8 —
+    # hire up to MAX_HANDS_PER_DAY while the backlog stays high; the daily
+    # cost of 1-2 hands ($1-2) is trivially cheap vs the extra actions.
+    if hire_hands:
+        backlog = _count_backlog(me, private, day, board_size)
+        if backlog > HIRE_THRESHOLD_TASKS and me["hires_today"] < MAX_HANDS_PER_DAY:
+            orders.append(["HIRE"])  # one HIRE per turn; engine processes it
+
     return orders[:10]  # engine caps market orders per turn
 
 
@@ -299,65 +346,70 @@ def _step_toward(pos: tuple[int, int], target: tuple[int, int]) -> str:
     return "PASS"
 
 
-def agent(obs, configuration=None, buy_land=BUY_LAND):
-    """Return a valid per-turn action dict (RM-014 BFS task assignment).
+def _unit_action(pos, farm, private, day, board_size, idx=0):
+    """One unit's action (farmer or hand): act in place or move toward task.
+
+    Shared by farmer + hands (RM-016). Returns a farmer/hand action list, e.g.
+    ["WATER"], ["HARVEST"], ["PLANT", "WHEAT"], ["EAST"], or ["PASS"].
+    `idx` is the inventory slot (0 = farmer, 1+ = hands) for the M7 carry check.
+    """
+    fx, fy = pos
+    tile = farm["tiles"][fy][fx]
+
+    # M7: DROP when it unblocks a harvest (yield > shed room) or above carry
+    # threshold — never let overflow hit the end-of-day discard.
+    if _carried_total(private, idx) > 0 and (
+        _carried_total(private, idx) >= DROP_CARRY_THRESHOLD
+        or _shed_room(private) < _harvestable_yield(tile, day)
+    ):
+        if _is_shed_adjacent(pos, board_size):
+            return ["DROP"]
+        return [_step_toward(pos, _shed_access_tile(board_size))]
+
+    assigned = _assign_task(pos, farm, private, day, board_size)
+    if assigned is None:
+        return ["PASS"]
+
+    target, task, action_spec = assigned
+    if target == pos:
+        if task == "PLANT":
+            for crop in V1_CROPS:
+                if private["seeds"].get(crop, 0) > 0:
+                    return ["PLANT", crop]
+            return ["PASS"]
+        return action_spec
+    return [_step_toward(pos, target)]
+
+
+def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS):
+    """Return a valid per-turn action dict (RM-016 farm hands).
 
     ENGINE CONTRACT: the runner calls agent(observation, configuration) — TWO
     positional args. `configuration` is the env config dict (ignored here);
     it MUST be accepted or the engine's second arg lands in `buy_land` (a
     non-empty dict is truthy, which silently enables land buying). `buy_land`
-    is a per-call override so A/B variants (RM-015) can disable expansion
-    without mutating the shared module; the submission default is BUY_LAND.
+    and `hire_hands` are per-call overrides so A/B variants (RM-015/016) can
+    toggle features without mutating the shared module; the submission
+    defaults are BUY_LAND / HIRE_HANDS.
 
     Per turn:
-      1. Build the farmer's market orders.
-      2. If carrying too much -> walk to shed and DROP (M7).
-      3. Assign the highest-priority unmet task via BFS from the farmer.
-      4. If already on the task tile -> perform the task action.
-         Else move one step toward it (BFS path).
-      5. No task -> PASS.
+      1. Build market orders (seeds, sell, land, hire).
+      2. Farmer + each hand (in their ACTUAL positions, M8) get a task via
+         BFS and act in place or move toward it (shared _unit_action).
     """
     player = obs["player"]
     me = obs["farms"][player]
     private = obs["private"]
     board_size = len(me["tiles"])
     day = obs["day"]
-    fx, fy = me["farmer"]
-    tile = me["tiles"][fy][fx]
 
-    market = _market_orders(me, private, obs["market"], buy_land=buy_land)
+    market = _market_orders(me, private, obs["market"], day,
+                            buy_land=buy_land, hire_hands=hire_hands,
+                            board_size=board_size)
 
-    def _action(farmer_action):
-        return {"farmer": farmer_action, "hands": [], "market": market}
+    farmer_action = _unit_action((me["farmer"][0], me["farmer"][1]),
+                                 me, private, day, board_size, idx=0)
+    hand_actions = [_unit_action((hx, hy), me, private, day, board_size, idx=i + 1)
+                    for i, (hx, hy) in enumerate(me["hands"])]
 
-    # --- 1. DROP when it unblocks a harvest (M7) ---
-    # If standing on a harvestable plant but the shed lacks room for the yield,
-    # DROP whatever we carry first (frees room), else wait. Also DROP above the
-    # carry threshold regardless (don't let overflow hit the day-end discard).
-    if _carried_total(private) > 0 and (
-        _carried_total(private) >= DROP_CARRY_THRESHOLD
-        or _shed_room(private) < _harvestable_yield(tile, day)
-    ):
-        home = _shed_access_tile(board_size)
-        if _is_shed_adjacent((fx, fy), board_size):
-            return _action(["DROP"])
-        return _action([_step_toward((fx, fy), home)])
-
-    # --- 2. Assign highest-priority task via BFS ---
-    assigned = _assign_task((fx, fy), me, private, day, board_size)
-    if assigned is None:
-        return _action(["PASS"])
-
-    target, task, action_spec = assigned
-    if target == (fx, fy):
-        # standing on the task tile — perform it
-        if task == "PLANT":
-            # resolve the crop: prefer whichever seed we have
-            for crop in V1_CROPS:
-                if private["seeds"].get(crop, 0) > 0:
-                    return _action(["PLANT", crop])
-            return _action(["PASS"])
-        return _action(action_spec)
-
-    # not there yet — move toward it
-    return _action([_step_toward((fx, fy), target)])
+    return {"farmer": farmer_action, "hands": hand_actions, "market": market}

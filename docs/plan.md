@@ -67,3 +67,23 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 - **This is a scope decision, not a strategic conclusion** (per RM-012's note): a single farmer can't work more land than the NW field — the extra tiles just sit empty while the farmer wastes turns walking. **Revisit at RM-016 (hired hands) when there's labor to actually work the extra tiles.** The A/B harness + variants (`agents/v1_land_on.py`, `agents/v1_land_off.py`) stay for that re-test.
 - **CRITICAL engine-contract bug found during A/B:** the runner calls `agent(observation, configuration)` — TWO positional args. My RM-015 change made `agent(obs, buy_land=BUY_LAND)` — the engine's configuration dict landed in `buy_land`, and since a non-empty dict is truthy, land-buying was silently ENABLED in both "land-ON" and (initially) "land-OFF" runs. Fixed: `agent(obs, configuration=None, buy_land=BUY_LAND)`. **This is the second engine-contract failure (after last-callable) — both are silent, both caught by tournament results, neither caught by smoke (which only checks no-exception).** Worth adding a signature check to the precheck.
 - **Margin improvement:** committed land-OFF now makes ~$4.5–4.9k vs RM-014's ~$4.3k — the fix (configuration not landing in buy_land) also means the earlier RM-014 runs were accidentally land-ON-ish, so RM-014's true baseline was slightly lower. No regression; smoke --full 150/0.
+
+## 2026-08-13 — RM-016 farm hands 2×2 A/B: land resolved, hands neutral
+
+**2×2 A/B (all vs starter, 80 paired games each, seed 1):**
+
+| Land | Hands | W/L/T | Win rate | CI (LB, UB) | Decision |
+|---|---|---|---|---|---|
+| OFF | OFF | 160/0 | 1.000 | (0.977, 1.000) | **PROMOTE** |
+| OFF | ON | 160/0 | 1.000 | (0.977, 1.000) | PROMOTE |
+| ON | OFF | 0/160 | 0.000 | (0.000, 0.023) | REJECT |
+| ON | ON | 0/160 | 0.000 | (0.000, 0.023) | REJECT |
+
+### Notes
+- **Land is the dominant factor and is decisively bad with OR without hands** — the "land+labor pays off" hypothesis is **FALSIFIED** at this scope. Buying land (NE→SW→SE) loses 0/160 regardless of hiring. The replay's top-bracket full-coverage observation (findings §7) remains a soft prior for a much larger farm economy (animals, many units), not reachable by v1's wheat/carrot loop.
+- **Hands are neutral at v1 scope**: both no-land arms win 160/0 with identical CI. Margin diagnostic (6 seeds): 1114 with hands vs 1196 without — within noise, slightly favoring no-hands. Hired hands plant/water/harvest fine (shared `_unit_action`), but the labor surplus isn't worth the fibonacci cost (~$2-4/day) when one farmer already clears the field.
+- **Promoted combination: (land OFF, hands OFF).** Committed `BUY_LAND=False, HIRE_HANDS=False`. Simpler, marginally better margin, no regression (160/0, CI [0.977, 1.000]).
+- **`_assign_task` generality claim CONFIRMED:** no hand-specific special-casing was needed. `_unit_action(pos, farm, private, day, board_size, idx)` serves farmer and hands identically; `idx` threads the per-unit inventory slot (M7 carry check). M8 handled by reading each hand's ACTUAL position from `me["hands"]` each turn — no assumed (5,4) spawn.
+- **M1 (FEED carry wheat) is structurally moot until RM-019** — no animals means no FEED task is generated, so there's no carry-wheat precondition to enforce yet. Noted, not coded as dead logic.
+- **Backlog fix during dev:** `_count_backlog` initially counted every empty tile as a PLANT task → backlog always > threshold → hired hands every day, planting everywhere, bleeding money. Fixed to count only URGENT tasks (WATER/HARVEST/DIG, priority ≥ DIG). This is why the first hands-ON run lost ($3163) before the fix ($4545).
+- smoke --full 150/0; micro_tests ALL PASS.
