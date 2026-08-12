@@ -157,6 +157,13 @@ assuming shared numbering.
 - Submit, monitor via kaggle competitions submissions
 - Archive to agents/v1_wheat_loop.py with sha256 + changelog
 - Stop Point: v1 Live on Ladder
+- STATUS: PARTIAL — precheck built + proven (catches last-callable bug
+  on deliberately-broken file + no-network on requests import); real
+  main.py/config.py pass all 4 checks; submission.tar.gz built with
+  main.py at root; archived agents/v1_wheat_loop.{py,cfg} + sha256 +
+  README changelog table. SUBMIT PENDING: kaggle CLI not authenticated
+  (~/.kaggle/kaggle.json missing) — needs user's Kaggle API key, then
+  `kaggle competitions submit kaggriculture -f submission.tar.gz -m "..."`.
 
 ## EPIC 4 — SCALE LOGIC
 

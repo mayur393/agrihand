@@ -23,3 +23,9 @@ scripts/submit.sh               # archives agents/vN_*, bundles submission.tar.g
 ## Repo layout
 
 See `PLAN.md` §2. Short version: `main.py` + `config.py` ship in the submission bundle; `agents/` archives frozen candidates; `eval/` has the gates; `scripts/` has setup/submit; `reports/` + `docs/` hold outputs and rationale.
+
+## Archived candidates
+
+| Version | Files | sha256 (main) | Changelog |
+|---|---|---|---|
+| v1_wheat_loop | `agents/v1_wheat_loop.{py,cfg}` | `6f66a1b2…3887` | RM-012 promoted vs starter: 160/0, CI [0.977, 1.000]. NW-field wheat/carrot loop, shed-room-aware harvest (M7), floor-aware selling, no land buying. |
