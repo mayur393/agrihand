@@ -1,20 +1,24 @@
-"""main.py — THE submission entry point (RM-012, v1 wheat/carrot loop).
+"""main.py — THE submission entry point (RM-014, BFS task assignment).
 
 Exposes `agent(obs)` for Kaggle's kaggriculture environment. Stdlib-only;
-imports config.py. v1 is a port of the sample loop pattern (plant→water→
-harvest→sell) with the mechanic corrections from docs/findings.md baked in:
+imports config.py. v1.2 replaces the deterministic scan-order loop with a
+real task-assignment system: a priority-ordered task list per turn
+(WATER/FEED > HARVEST > COLLECT_FERTILIZER > CARE > DIG > PLANT > PLACE),
+then BFS from each unit's position to the nearest tile matching the
+highest-priority unmet task.
 
-  M1 (FEED uses carried inventory, not shed) — v1 has no animals, but if
-      animal code is added later, wheat must be carried, not shed-pulled.
+Mechanic corrections baked in (docs/findings.md):
+  M1 (FEED uses carried inventory, not shed) — a FEED task must ensure the
+      unit carries wheat before reaching the animal. No animals in v1, but
+      `assign_task` is per-unit so RM-016 reuses it unchanged.
   M7 (no mid-day carried cap; shed capacity + end-of-day overflow discard
-      is the real constraint) — harvesting is shed-room-aware: we never
-      harvest more than the shed can absorb before the end-of-day drop.
-  M8 (first-hand spawn = first FREE shed-access tile, NWSE) — no fixed
-      (5,4) assumption anywhere; hands aren't wired in v1.
+      is the real constraint) — harvesting is shed-room-aware.
+  M8 (LOCKED tiles passable, not actionable) — BFS may path through LOCKED
+      tiles but no task ever targets one.
 
-Sell policy: never sell below the per-crop floor (PRICE_FLOOR, strategy.md
-floor rule). All tunables come from config.py — no bare literals for anything
-already defined there.
+Compute budget (RM-008/TICKET-03): BFS is capped at BFS_MAX_STEPS (16 =
+half-board) from config.py; worst-case single-farmer turn is benchmarked
+and logged in docs/findings.md.
 
 ENGINE CONTRACT: kaggle_environments loads main.py by exec() and picks the
 LAST callable defined in the module as the agent (get_last_callable returns
@@ -23,7 +27,10 @@ function defined in this file — no helper functions after it.
 """
 from __future__ import annotations
 
+from collections import deque
+
 from config import (
+    BFS_MAX_STEPS,
     CROPS,
     PRICE_FLOOR,
     SEED_COSTS,
@@ -36,16 +43,56 @@ from config import (
 # crops whose glut dynamics v1 doesn't manage yet (strategy.md §3.4).
 V1_CROPS = ("WHEAT", "CARROT")
 
-# Plant only within this Chebyshev radius of the shed-access tile so
-# harvest→DROP→SELL cycles stay short. The farmer operates a small NW field.
-PLANT_RADIUS = 1
-
 # Farmer walks to the shed to DROP when carrying at least this many items
 # (M7: shed is the real constraint; don't let overflow hit the day-end discard).
 DROP_CARRY_THRESHOLD = 20
 
+# Plant only within this Chebyshev radius of the shed-access tile so
+# harvest→DROP→SELL cycles stay short. The farmer operates a small NW field.
+PLANT_RADIUS = 1
+
+# Task priorities (RM-014). Higher = more urgent. FEED/HARVEST etc. that v1
+# doesn't use yet are present so the priority table is complete for RM-016+.
+_TASK_PRIORITY = {
+    "WATER": 7, "FEED": 7,
+    "HARVEST": 6,
+    "COLLECT_FERTILIZER": 5,
+    "CARE": 4,
+    "DIG": 3,
+    "PLANT": 2,
+    "PLACE": 1,
+}
+
+# Direction vectors (y grows downward).
+_MOVES = (("NORTH", 0, -1), ("SOUTH", 0, 1), ("EAST", 1, 0), ("WEST", -1, 0))
+
 
 def _shed_access_tile(board_size: int) -> tuple[int, int]:
+    """First NW shed-access tile (the farmer's home), matching engine spawn."""
+    half = board_size // 2
+    return (half - 1, half - 1)  # NW: (4,4) on a 10x10 board
+
+
+def _harvestable_yield(tile, day) -> int:
+    """Yield_units if `tile` is a harvestable plant now, else 0.
+
+    Used for the M7 shed-room check: DROP only when it unblocks an actual
+    harvest (a mature plant with yield we can't yet store).
+    """
+    if not isinstance(tile, dict) or tile.get("kind") != "PLANT":
+        return 0
+    crop = tile.get("crop")
+    crop_data = CROPS.get(crop, {})
+    age = day - tile.get("planted_day", day)
+    if age < crop_data.get("first_yield_day", 99):
+        return 0
+    return tile.get("yield_units", 0)
+
+
+def _in_field(pos: tuple[int, int], board_size: int) -> bool:
+    """True if `pos` is within the planned field (near the shed-access tile)."""
+    home = _shed_access_tile(board_size)
+    return max(abs(pos[0] - home[0]), abs(pos[1] - home[1])) <= PLANT_RADIUS
     """First NW shed-access tile (the farmer's home), matching engine spawn."""
     half = board_size // 2
     return (half - 1, half - 1)  # NW: (4,4) on a 10x10 board
@@ -66,6 +113,129 @@ def _shed_room(private) -> int:
 def _carried_total(private) -> int:
     """Total items on the main farmer's carried inventory."""
     return sum(private["inventories"][0].values()) if private["inventories"] else 0
+
+
+def _bfs_nearest(start, tiles, board_size, is_target, max_steps=BFS_MAX_STEPS):
+    """BFS from `start` to the nearest tile where is_target(x, y) is True.
+
+    The start tile itself is a candidate (distance 0) — a unit standing on a
+    task tile should act in place, not walk away. LOCKED tiles are passable
+    but never actionable (M8). Returns the target (x, y) or None if none is
+    reachable within `max_steps`.
+    """
+    sx, sy = start
+    if is_target(sx, sy):
+        return start
+    seen = {start}
+    frontier = deque([(sx, sy, 0)])
+    while frontier:
+        x, y, d = frontier.popleft()
+        if d >= max_steps:
+            continue
+        for _, dx, dy in _MOVES:
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < board_size and 0 <= ny < board_size):
+                continue
+            if (nx, ny) in seen:
+                continue
+            seen.add((nx, ny))
+            if is_target(nx, ny):
+                return (nx, ny)
+            frontier.append((nx, ny, d + 1))
+    return None
+
+
+def _tile_task_priority(tile, day, private, board_size) -> tuple[int, str]:
+    """Highest-priority unmet task on a single tile, or (0, None).
+
+    Priority (RM-014): WATER/FEED > HARVEST > COLLECT_FERTILIZER > CARE >
+    DIG > PLANT > PLACE. Only tasks the state supports are considered.
+    """
+    if tile is None:
+        # PLANT on empty unlocked tile IF within the planned field (near the
+        # shed). Chasing any empty tile with seed causes the farmer to wander
+        # the whole board; the field is where harvest→DROP cycles are short.
+        if any(private["seeds"].get(c, 0) > 0 for c in V1_CROPS):
+            # field radius check happens in the caller via _in_field()
+            return (_TASK_PRIORITY["PLANT"], "PLANT")
+        return (0, None)
+    if tile == "LOCKED":
+        return (0, None)  # never actionable (M8)
+    if not isinstance(tile, dict):
+        return (0, None)
+
+    kind = tile.get("kind")
+    if kind == "PLANT":
+        crop = tile.get("crop")
+        crop_data = CROPS.get(crop, {})
+        age = day - tile.get("planted_day", day)
+        if age >= crop_data.get("first_yield_day", 99) and tile.get("yield_units", 0) > 0:
+            # harvestable — but only if shed has room (M7), else it's not
+            # actionable this turn (the unit should DROP first instead)
+            if _shed_room(private) >= tile.get("yield_units", 0):
+                return (_TASK_PRIORITY["HARVEST"], "HARVEST")
+            return (0, None)
+        if not tile.get("watered_today"):
+            return (_TASK_PRIORITY["WATER"], "WATER")
+        return (0, None)
+    if kind == "WEED":
+        return (_TASK_PRIORITY["DIG"], "DIG")
+    # COOP/PASTURE structures (no animals yet in v1) — PLACE/COLLECT/CARE/FEED
+    # arrive with RM-016/RM-019. Not actionable in v1.
+    return (0, None)
+
+
+def _assign_task(unit_pos, farm, private, day, board_size):
+    """Per-unit task assignment: nearest tile with the highest-priority unmet task.
+
+    Structured to be reusable for hired hands (RM-016): takes a unit position
+    and farm state, returns (target, task) or None. The engine applies one
+    action per unit per turn, so `agent` decides act-in-place vs move using
+    this.
+
+    Returns (target, task, action_spec):
+      - target: (x, y) tile for the task
+      - task: one of WATER/HARVEST/DIG/PLANT
+      - action_spec: the action to take once AT the target
+    """
+    tiles = farm["tiles"]
+    # Priority ladder: try each priority class from highest to lowest, and
+    # BFS to the nearest tile of that class. Priority first, distance second.
+    for pri in sorted(set(_TASK_PRIORITY.values()), reverse=True):
+        targets = []
+        for y in range(board_size):
+            for x in range(board_size):
+                t = tiles[y][x]
+                p, task = _tile_task_priority(t, day, private, board_size)
+                if p == pri:
+                    # PLANT only within the planned field (near the shed) —
+                    # otherwise the farmer chases empty tiles across the board.
+                    if task == "PLANT" and not _in_field((x, y), board_size):
+                        continue
+                    targets.append((x, y, task))
+        if not targets:
+            continue
+        target_set = set((t[0], t[1]) for t in targets)
+        tgt = _bfs_nearest(unit_pos, tiles, board_size,
+                           lambda x, y, ts=target_set: (x, y) in ts)
+        if tgt is not None:
+            task = next(task for (x, y, task) in targets if (x, y) == tgt)
+            return (tgt, task, _action_for_task(task))
+    return None
+
+
+def _action_for_task(task):
+    """Action spec to apply once standing on the task target."""
+    if task == "WATER":
+        return ["WATER"]
+    if task == "HARVEST":
+        return ["HARVEST"]
+    if task == "DIG":
+        return ["DIG"]
+    if task == "PLANT":
+        # caller resolves which crop
+        return ["PLANT", None]
+    return ["PASS"]
 
 
 def _market_orders(me, private, market) -> list:
@@ -110,67 +280,16 @@ def _step_toward(pos: tuple[int, int], target: tuple[int, int]) -> str:
     return "PASS"
 
 
-def _field_tiles(board_size: int) -> list[tuple[int, int]]:
-    """Fixed 3x3 field around the shed-access tile (NW corner), scan order.
-
-    Chebyshev radius PLANT_RADIUS (=1) around home (4,4). Scan order is a
-    deterministic row-major sweep so the farmer cycles the whole field.
-    """
-    home = _shed_access_tile(board_size)
-    hx, hy = home
-    tiles = []
-    for dy in range(-PLANT_RADIUS, PLANT_RADIUS + 1):
-        for dx in range(-PLANT_RADIUS, PLANT_RADIUS + 1):
-            x, y = hx + dx, hy + dy
-            if 0 <= x < board_size and 0 <= y < board_size:
-                tiles.append((x, y))
-    return tiles
-
-
-def _next_field_tile(me, private, day, board_size) -> tuple[int, int] | None:
-    """Next field tile needing attention, in deterministic scan order.
-
-    Priority within the field: harvest-ready plant > unwatered plant > weed >
-    empty-with-seed. Returns None if the whole field is idle.
-    """
-    fx, fy = me["farmer"]
-    for pass_no in (0, 1):
-        for (x, y) in _field_tiles(board_size):
-            t = me["tiles"][y][x]
-            if t is None:
-                if pass_no == 1 and any(private["seeds"].get(c, 0) > 0 for c in V1_CROPS):
-                    return (x, y)
-                continue
-            if not isinstance(t, dict):
-                continue
-            if t.get("kind") == "WEED":
-                if pass_no == 0:
-                    return (x, y)
-            elif t.get("kind") == "PLANT":
-                age = day - t.get("planted_day", day)
-                crop_data = CROPS.get(t.get("crop"), {})
-                mature = age >= crop_data.get("first_yield_day", 99) and t.get("yield_units", 0) > 0
-                if pass_no == 0 and (mature or not t.get("watered_today")):
-                    return (x, y)
-    return None
-
-
 def agent(obs):
-    """Return a valid per-turn action dict.
+    """Return a valid per-turn action dict (RM-014 BFS task assignment).
 
-    v1 farmer policy — a small deterministic field around the shed, cycled
-    in priority order each turn:
-      1. Standing on a mature, harvestable plant AND shed has room -> HARVEST.
-         If shed is full, DROP what we carry first (M7: never let overflow be
-         silently discarded at day end).
-      2. Standing on an unwatered plant -> WATER.
-      3. Standing on a weed -> DIG.
-      4. Standing on an empty field tile with seed -> PLANT.
-      5. Carrying too much -> walk to shed and DROP (M7).
-      6. Otherwise move to the next field tile that needs attention
-         (harvest-ready / unwatered / empty / weed), in a fixed scan order
-         around the shed (no BFS yet — RM-014).
-    Market orders run every turn regardless of the farmer action.
+    Per turn:
+      1. Build the farmer's market orders.
+      2. If carrying too much -> walk to shed and DROP (M7).
+      3. Assign the highest-priority unmet task via BFS from the farmer.
+      4. If already on the task tile -> perform the task action.
+         Else move one step toward it (BFS path).
+      5. No task -> PASS.
     """
     player = obs["player"]
     me = obs["farms"][player]
@@ -185,42 +304,34 @@ def agent(obs):
     def _action(farmer_action):
         return {"farmer": farmer_action, "hands": [], "market": market}
 
-    # --- 1. Harvest when mature + shed has room (M7-aware) ---
-    if isinstance(tile, dict) and tile.get("kind") == "PLANT":
-        crop = tile["crop"]
-        crop_data = CROPS[crop]
-        age = day - tile["planted_day"]
-        if age >= crop_data["first_yield_day"] and tile.get("yield_units", 0) > 0:
-            if _shed_room(private) >= tile["yield_units"]:
-                return _action(["HARVEST"])
-            # shed full: DROP what we carry (if any) to make room, else PASS
-            if _carried_total(private) > 0 and _is_shed_adjacent((fx, fy), board_size):
-                return _action(["DROP"])
-            return _action(["PASS"])
-        if not tile.get("watered_today"):
-            return _action(["WATER"])
-        # watered + immature: fall through to movement (don't get stuck on one tile)
-
-    # --- 2. Weed -> DIG ---
-    if isinstance(tile, dict) and tile.get("kind") == "WEED":
-        return _action(["DIG"])
-
-    # --- 3. Empty field tile with seed -> PLANT ---
-    home = _shed_access_tile(board_size)
-    if tile is None and max(abs(fx - home[0]), abs(fy - home[1])) <= PLANT_RADIUS:
-        for crop in V1_CROPS:
-            if private["seeds"].get(crop, 0) > 0:
-                return _action(["PLANT", crop])
-        return _action(["PASS"])
-
-    # --- 4. Carrying too much -> walk to shed and DROP (M7) ---
-    if _carried_total(private) >= DROP_CARRY_THRESHOLD:
+    # --- 1. DROP when it unblocks a harvest (M7) ---
+    # If standing on a harvestable plant but the shed lacks room for the yield,
+    # DROP whatever we carry first (frees room), else wait. Also DROP above the
+    # carry threshold regardless (don't let overflow hit the day-end discard).
+    if _carried_total(private) > 0 and (
+        _carried_total(private) >= DROP_CARRY_THRESHOLD
+        or _shed_room(private) < _harvestable_yield(tile, day)
+    ):
+        home = _shed_access_tile(board_size)
         if _is_shed_adjacent((fx, fy), board_size):
             return _action(["DROP"])
         return _action([_step_toward((fx, fy), home)])
 
-    # --- 5. Move to the next field tile needing attention (scan order) ---
-    target = _next_field_tile(me, private, day, board_size)
-    if target is not None:
-        return _action([_step_toward((fx, fy), target)])
-    return _action(["PASS"])
+    # --- 2. Assign highest-priority task via BFS ---
+    assigned = _assign_task((fx, fy), me, private, day, board_size)
+    if assigned is None:
+        return _action(["PASS"])
+
+    target, task, action_spec = assigned
+    if target == (fx, fy):
+        # standing on the task tile — perform it
+        if task == "PLANT":
+            # resolve the crop: prefer whichever seed we have
+            for crop in V1_CROPS:
+                if private["seeds"].get(crop, 0) > 0:
+                    return _action(["PLANT", crop])
+            return _action(["PASS"])
+        return _action(action_spec)
+
+    # not there yet — move toward it
+    return _action([_step_toward((fx, fy), target)])

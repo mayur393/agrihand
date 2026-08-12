@@ -170,6 +170,17 @@ assuming shared numbering.
 ### RM-014 — Task Assignment (BFS Priority Queue)
 - Priority: WATER/FEED > HARVEST > COLLECT_FERTILIZER > CARE > DIG > PLANT > PLACE
 - Nearest-task-first per unit, LOCKED tiles passable not actionable
+- STATUS: DONE — main.py v1.2: per-unit `_assign_task(unit_pos, farm, ...)`
+  with BFS (`_bfs_nearest`) capped at BFS_MAX_STEPS; priority ladder
+  WATER/FEED > HARVEST > COLLECT/FERT > CARE > DIG > PLANT > PLACE;
+  start-tile is a BFS candidate (distance 0) — fixes ping-pong between
+  two empty tiles; PLANT restricted to the near-shed field (avoids
+  whole-board wandering); M7 DROP-when-harvest-blocked + carry-threshold;
+  M8 LOCKED passable. Gates: smoke --full 150/0; tournament vs starter
+  160/0 CI [0.977, 1.000] PROMOTE (no regression, seeds 1,3,7 all WIN);
+  BFS cap test in micro_tests (target beyond cap -> None, graceful).
+  Benchmark: 0.088 ms/call worst-ish single farmer (logged findings §3)
+  — far under the 100 ms budget. Per-unit structure verified for RM-016.
 
 ### RM-015 — Land Expansion Logic
 - Pinned order NE→SW→SE ($1k/$2k/$4k)

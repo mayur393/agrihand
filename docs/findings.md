@@ -17,7 +17,7 @@ Ground-truth mechanics, benchmark numbers, and researched limits. Every entry is
 
 - [ ] **Timeout search:** checked `kaggle_environments` source (`agents.py`/runner) + Kaggle agent-competition docs for a per-step/per-action timeout.
   - Result: `___` (exact value) **or** "no explicit timeout found; verified via <source searched>".
-- [ ] **Worst-case BFS turn benchmark:** max hands, fully unlocked 10×10 board, all units pathing: `___ ms` (target < ~100 ms).
+- [x] **Worst-case BFS turn benchmark:** single-farmer worst-ish case (20 scattered unwatered plants, farmer at corner, BFS_MAX_STEPS=16): `0.088 ms`/call (measured 2026-08-13, n=2000) — far under the <100 ms budget. Multi-hand worst case (RM-016) re-benchmarked then.
 - [ ] Mitigations if close to a limit: `BFS_MAX_STEPS` radius cap (default 16), shed-path caching, task-queue truncation. See PLAN.md §3.5.
 
 ## 4. Mechanic verifications (assert-based tests in `eval/micro_tests.py`)

@@ -272,6 +272,38 @@ def test_v1_shed_room_aware_harvest():
     assert farmer_act == "DROP", f"RM-012 M7: expected DROP to make room, got {farmer_act}"
 
 
+def test_bfs_max_steps_cap():
+    """RM-014: BFS respects BFS_MAX_STEPS — a target beyond the cap is not found
+    (graceful fallback, no infinite/expensive search), and one within it is."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import main as v1
+
+    board_size = 10
+    tiles = [[None] * board_size for _ in range(board_size)]
+    # target far corner (9,9); start at (4,4) — Manhattan distance 10 > cap 4
+    far_target = (9, 9)
+
+    # within cap (distance 2) -> found
+    found_near = v1._bfs_nearest((4, 4), tiles, board_size,
+                                 lambda x, y: (x, y) == (6, 4), max_steps=4)
+    assert found_near == (6, 4), f"RM-014: BFS should find near target, got {found_near}"
+
+    # beyond cap (distance 10 > max_steps=4) -> None (graceful, no crash)
+    found_far = v1._bfs_nearest((4, 4), tiles, board_size,
+                                lambda x, y: (x, y) == far_target, max_steps=4)
+    assert found_far is None, f"RM-014: BFS must respect max_steps cap, got {found_far}"
+
+    # default cap (BFS_MAX_STEPS=16) still finds the corner from center
+    found_default = v1._bfs_nearest((4, 4), tiles, board_size,
+                                    lambda x, y: (x, y) == far_target)
+    assert found_default == far_target, f"RM-014: default cap should reach corner, got {found_default}"
+
+    # start-tile is a candidate (distance 0)
+    found_start = v1._bfs_nearest((4, 4), tiles, board_size,
+                                  lambda x, y: (x, y) == (4, 4), max_steps=4)
+    assert found_start == (4, 4), f"RM-014: BFS must consider start tile (distance 0), got {found_start}"
+
+
 def test_price_function_below():
     """M9a (TICKET-11): below-target side reproduces P(I0-T) for all 9 resources."""
     for r, (p_neg, _, _) in EXPECTED.items():
@@ -302,6 +334,7 @@ def main() -> None:
     test_price_function_above()
     test_price_floor()
     test_v1_shed_room_aware_harvest()
+    test_bfs_max_steps_cap()
     print("micro_tests: ALL PASS")
 
 
