@@ -59,6 +59,18 @@ SHED_CAPACITY = 100  # host default; mirror for policy planning only
 # Seed costs (engine CROPS table; docs/findings.md M-rows).
 SEED_COSTS = {"WHEAT": 10, "CARROT": 20, "TOMATO": 50, "STRAWBERRY": 100, "MELON": 80}
 
+# Crop growth windows (engine CROPS table; docs/findings.md M-rows). Needed by
+# main.py's harvest gate — no bare literals in decision logic (TICKET-06).
+# first_yield_day: earliest day HARVEST succeeds; max_yield_day: single-yield
+# crops expire; ongoing: re-yields every `interval` days after first_yield_day.
+CROPS = {
+    "WHEAT":      {"first_yield_day": 2, "max_yield_day": 4, "interval": 0, "ongoing": False},
+    "CARROT":     {"first_yield_day": 2, "max_yield_day": 3, "interval": 0, "ongoing": False},
+    "TOMATO":     {"first_yield_day": 8, "max_yield_day": 8, "interval": 1, "ongoing": True},
+    "STRAWBERRY": {"first_yield_day": 10, "max_yield_day": 10, "interval": 2, "ongoing": True},
+    "MELON":      {"first_yield_day": 10, "max_yield_day": 12, "interval": 0, "ongoing": False},
+}
+
 # Price-curve constants for the market-price function (docs/findings.md M9a/M9b).
 MARKET_I0 = 10_000
 # Floor below which no market price drops (engine PRICE_FLOOR; findings M10).

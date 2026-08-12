@@ -136,6 +136,15 @@ assuming shared numbering.
     before end-of-day auto-drop — verify against M7's confirmed cap
     (findings.md: "stockpiling on farmer/hand inventories does not
     bypass the cap"), not just shed capacity
+- STATUS: DONE — v1 loop in main.py (small NW field near shed,
+  deterministic scan order, shed-room-aware harvest per M7, no land
+  buying until RM-015, floor-aware selling). Gates: smoke --full
+  150 ep / 0 fail; tournament vs starter 160/0, CI [0.977, 1.000]
+  PROMOTE (verified across seeds 1,2,3,5,7,11 — all WINS by ~$800);
+  micro_tests incl. new RM-012 M7 shed-room assertion ALL PASS.
+  Notable port fix: kaggle_environments loads the LAST callable as
+  agent — helpers must precede `agent` (engine contract documented
+  in main.py docstring).
 
 ### RM-013 — First Submission
 - Bundle main.py + config.py as submission.tar.gz (confirmed multi-file default)

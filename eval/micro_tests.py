@@ -224,6 +224,54 @@ def test_price_floor():
     assert private["shed"]["WHEAT"] == 2 and farm["money"] == 3001, "M10: unit sold at floor"
 
 
+def test_v1_shed_room_aware_harvest():
+    """RM-012 M7 acceptance: v1's harvest is shed-room-aware — no silent overflow discard.
+
+    Set the shed nearly full, put the farmer on a mature plant with yield that
+    exceeds shed room, and confirm the v1 agent does NOT harvest (which would
+    lose the excess at end-of-day). Instead it must DROP/PASS. This guards the
+    exact M7 behavior the strategy depends on.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import main as v1
+
+    obs = {
+        "player": 0,
+        "day": 3,
+        "hour": 0,
+        "farms": [{
+            "money": 3000.0,
+            "tiles": [[None] * 10 for _ in range(10)],
+            "farmer": [4, 4],
+            "hands": [],
+            "unlocked_quadrants": ["NW"],
+            "hires_today": 0,
+        }],
+        "private": {
+            "shed": {"WHEAT": 99, "CARROT": 0},  # 99/100 full -> 1 room
+            "seeds": {"WHEAT": 1, "CARROT": 1},
+            "inventories": [{"WHEAT": 2}],  # carrying some
+        },
+        "market": {"inventory": {}, "prices": {"WHEAT": 20, "CARROT": 25}},
+        "town": {"unlocked_shops": []},
+    }
+    # mature wheat with yield 4 on the farmer's tile
+    obs["farms"][0]["tiles"][4][4] = {
+        "kind": "PLANT", "crop": "WHEAT", "planted_day": 0,
+        "watered_today": True, "yield_units": 4, "consecutive_unwatered": 0,
+        "max_lifespan_step": 1000, "fertilized_until_day": -1,
+    }
+    action = v1.agent(obs)
+    farmer_act = action["farmer"][0]
+    # shed room is 1 < yield 4 -> must NOT harvest; farmer is shed-adjacent and
+    # carrying -> DROP (makes room), never HARVEST
+    assert farmer_act != "HARVEST", (
+        f"RM-012 M7: harvested with shed room 1 < yield 4 — overflow would be "
+        f"discarded at end-of-day. action={farmer_act}"
+    )
+    assert farmer_act == "DROP", f"RM-012 M7: expected DROP to make room, got {farmer_act}"
+
+
 def test_price_function_below():
     """M9a (TICKET-11): below-target side reproduces P(I0-T) for all 9 resources."""
     for r, (p_neg, _, _) in EXPECTED.items():
@@ -253,6 +301,7 @@ def main() -> None:
     test_price_function_below()
     test_price_function_above()
     test_price_floor()
+    test_v1_shed_room_aware_harvest()
     print("micro_tests: ALL PASS")
 
 

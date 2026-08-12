@@ -70,6 +70,12 @@ def resolve_agent(name: str, cwd: Path):
         raise SystemExit(f"agent not found: {name} (tried {path})")
     import importlib.util
 
+    # Add the file's directory to sys.path so `from config import ...` (and
+    # sibling imports) resolve the same way the engine's exec-based loader does.
+    import sys
+    from pathlib import Path as _P
+    if str(path.parent) not in sys.path:
+        sys.path.insert(0, str(path.parent))
     spec = importlib.util.spec_from_file_location(path.stem, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
