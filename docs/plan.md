@@ -104,3 +104,21 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 - **Step 3 NOT run** (per RM-017 acceptance criterion): neither crop showed individual improvement, so no three-way crop+land+hands test. The "land+labor+crop" hypothesis has no individual signal to justify it; the prior two land rejections (RM-015/016) stand.
 - **Framing preserved for later:** a 0/160 land rejection twice means the next land attempt needs a genuinely different input mix. The replay's top-bracket crop/animal density remains the soft prior — but that scale likely needs animals (RM-019) + premium crop timing (RM-018), not just adding TOMATO/MELON to the existing loop.
 - Committed main.py stays baseline crop_mix=("WHEAT","CARROT"), BUY_LAND=False, HIRE_HANDS=False. smoke --full 150/0; no regression.
+
+## 2026-08-13 — RM-018 sale timing self-play A/B: NEGATIVE (timing has no teeth at v1)
+
+**Scoping (option a, stated):** applied timed-sell discipline to the committed wheat/carrot baseline (sell only in the post-consumption-tick window, step % 4 == 0) — NOT re-introducing premium crops. RM-017 already rejected premium crops under naive sell; testing them again under timed sell is a separate question that (a) didn't earn the right to run.
+
+**Self-play A/B (the new discriminating benchmark — starter is saturated):**
+
+| Candidate | Opponent | W/L/T | Win rate | CI (LB, UB) | Decision |
+|---|---|---|---|---|---|
+| timed-sell | committed immediate-sell | 79/79/2 | 0.494 | (0.417, 0.570) | **INCONCLUSIVE → NEGATIVE** |
+
+**Starter regression-only (proves not-broken, not better):** timed-sell 160/0, CI [0.977, 1.000] — as expected, saturated.
+
+### Notes
+- **Timed selling does NOT help at v1's wheat/carrot shed volume.** Self-play CI [0.417, 0.570] straddles 0.50 — the two are statistically indistinguishable. The likely reason: the shed holds so little and wheat/carrot absorbs gluts so well (M9 price curve: wheat above-target only drops ~24% even at 2T glut) that holding a few turns for a tick gains nothing measurable.
+- **Benchmark saturation confirmed and now solved:** `starter` returns 160/0 for every variant (baseline, +tomato, +melon, timed) — it can only confirm "not broken," never "better." Self-play (candidate vs committed main.py) is the new discriminating signal: it produced a non-saturated 79/79/2 where starter would've been silent. **From here on, self-play is the promotion signal; starter is regression-only.**
+- **BUY_PRODUCT rule verified:** v1 never issues BUY_PRODUCT (grows everything); the restriction is enforced by absence, now documented in `_market_orders` (if ever added, WHEAT/FERTILIZER only).
+- Committed main.py stays `timed_sell=False` (immediate sell) — no promotion. smoke --full 150/0; micro_tests pass.

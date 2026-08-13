@@ -236,6 +236,16 @@ assuming shared numbering.
 - Staples: steady sell, maintain wheat feed buffer
 - BUY_PRODUCT restricted to WHEAT/FERTILIZER only
 - Gate + archive each promoted variant, ≤1–2 submissions/day cadence
+- STATUS: DONE — scoping option (a) taken: timed-sell applied to committed
+  wheat/carrot baseline (sell only step % 4 == 0, post-consumption-tick).
+  Added `timed_sell` param + `step` from obs; BUY_PRODUCT rule verified
+  (enforced by absence, documented in _market_orders). NEW BENCHMARK:
+  starter is saturated (160/0 for every variant) — self-play is now the
+  discrimination signal. Self-play A/B (timed vs committed): 79/79/2
+  CI [0.417, 0.570] INCONCLUSIVE → NEGATIVE — timing has no teeth at
+  v1's wheat/carrot shed volume. Starter regression-only: 160/0. Not
+  promoted; committed main.py stays immediate-sell. Logged in
+  docs/plan.md. smoke --full 150/0.
 
 ## EPIC 5 — ANIMALS
 

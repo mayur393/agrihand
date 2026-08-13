@@ -286,7 +286,7 @@ def _action_for_task(task):
     return ["PASS"]
 
 
-def _market_orders(me, private, market, day, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10, crop_mix=V1_CROPS) -> list:
+def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10, crop_mix=V1_CROPS, timed_sell=False) -> list:
     """Queue market orders: buy seeds, sell shed stock, buy land, hire hands."""
     orders: list = []
 
@@ -298,15 +298,34 @@ def _market_orders(me, private, market, day, buy_land=BUY_LAND, hire_hands=HIRE_
     # Sell shed stock. Keep a wheat buffer for future feeding (strategy.md);
     # never sell below the floor (M10). Staples (wheat/carrot) absorb gluts,
     # so selling them steadily is fine.
+    #
+    # TIMED-SELL (RM-018): town consumes every 4 steps (shops) and 24 steps
+    # (center); prices are highest right after a tick (inventory drained). When
+    # timed_sell is ON, bias sells to the window immediately following a tick
+    # (step % 4 == 0) instead of dumping the full shed every turn. This is the
+    # wheat/carrot scoping (option a) — premium timing comes later if this
+    # mechanism shows teeth in self-play.
+    shop_interval = 4  # engine townShopSellInterval default (rules-notes.md)
+    in_sell_window = (not timed_sell) or (step % shop_interval == 0)
+
     shed = private["shed"]
     for item, qty in shed.items():
         if item in ("WHEAT", "CARROT"):
             buffer = WHEAT_BUFFER_BASE if item == "WHEAT" else 0
             excess = qty - buffer
             if excess > 0 and market["prices"].get(item, PRICE_FLOOR) > PRICE_FLOOR:
-                orders.append(["SELL", item, excess])
+                # timed-sell: sell only in the window (else hold)
+                if in_sell_window:
+                    orders.append(["SELL", item, excess])
         elif qty > 0 and market["prices"].get(item, PRICE_FLOOR) > PRICE_FLOOR:
-            orders.append(["SELL", item, qty])
+            if in_sell_window:
+                orders.append(["SELL", item, qty])
+
+    # BUY_PRODUCT is intentionally NOT issued in v1 (RM-018 rule): we grow
+    # everything ourselves, and buying back is a net-zero trap. If it is ever
+    # added (e.g. fertilizer for melon season), it MUST be restricted to
+    # WHEAT/FERTILIZER only — never premium goods. No BUY_PRODUCT order exists
+    # anywhere in this code path, which enforces the rule by absence.
 
     # Buy land: next quadrant in the PINNED order NE->SW->SE, when cash allows
     # after keeping the reserve buffer.
@@ -381,7 +400,7 @@ def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS):
     return [_step_toward(pos, target)]
 
 
-def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, crop_mix=V1_CROPS):
+def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, crop_mix=V1_CROPS, timed_sell=False):
     """Return a valid per-turn action dict (RM-016 farm hands).
 
     ENGINE CONTRACT: the runner calls agent(observation, configuration) — TWO
@@ -402,10 +421,12 @@ def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, cro
     private = obs["private"]
     board_size = len(me["tiles"])
     day = obs["day"]
+    step = obs.get("step", day * 24 + obs.get("hour", 0))
 
-    market = _market_orders(me, private, obs["market"], day,
+    market = _market_orders(me, private, obs["market"], day, step=step,
                             buy_land=buy_land, hire_hands=hire_hands,
-                            board_size=board_size, crop_mix=crop_mix)
+                            board_size=board_size, crop_mix=crop_mix,
+                            timed_sell=timed_sell)
 
     farmer_action = _unit_action((me["farmer"][0], me["farmer"][1]),
                                  me, private, day, board_size, idx=0,
