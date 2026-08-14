@@ -70,6 +70,15 @@ HIRE_HANDS = False
 # where daily cost stops being trivially cheap; the plan targets 1-2 hands.
 MAX_HANDS_PER_DAY = 2
 
+# Animal pipeline (RM-019) — DEFAULT OFF (dormant-safe). BUY_ANIMAL GOOSE +
+# BUILD_COOP + PLACE only; no FEED/CARE/HARVEST/COLLECT_FERTILIZER (RM-020 owns
+# the daily care loop). A placed goose with no feeding will starve after 2
+# unfed days — expected at this scope, not a bug.
+ANIMALS_ENABLED = False
+
+# Goose is the first animal (cheapest $300, 4-day first yield).
+GOOSE_COST = 300
+
 # Task priorities (RM-014). Higher = more urgent. FEED/HARVEST etc. that v1
 # doesn't use yet are present so the priority table is complete for RM-016+.
 _TASK_PRIORITY = {
@@ -80,6 +89,7 @@ _TASK_PRIORITY = {
     "DIG": 3,
     "PLANT": 2,
     "PLACE": 1,
+    "BUILD_COOP": 1,  # opportunistic one-time setup (RM-019), same tier as PLACE
 }
 
 # Direction vectors (y grows downward).
@@ -175,19 +185,21 @@ def _bfs_nearest(start, tiles, board_size, is_target, max_steps=BFS_MAX_STEPS):
     return None
 
 
-def _tile_task_priority(tile, day, private, board_size, crop_mix=V1_CROPS) -> tuple[int, str]:
+def _tile_task_priority(tile, day, private, board_size, farm=None, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED) -> tuple[int, str]:
     """Highest-priority unmet task on a single tile, or (0, None).
 
     Priority (RM-014): WATER/FEED > HARVEST > COLLECT_FERTILIZER > CARE >
-    DIG > PLANT > PLACE. Only tasks the state supports are considered.
+    DIG > PLANT > PLACE/BUILD_COOP. Only tasks the state supports are considered.
+    `farm` is needed for BUILD_COOP (check if a coop already exists).
     """
     if tile is None:
-        # PLANT on empty unlocked tile IF within the planned field (near the
-        # shed). Chasing any empty tile with seed causes the farmer to wander
-        # the whole board; the field is where harvest→DROP cycles are short.
+        # PLANT on empty unlocked tile IF we have a seed for the mix.
         if any(private["seeds"].get(c, 0) > 0 for c in crop_mix):
-            # field radius check happens in the caller via _in_field()
             return (_TASK_PRIORITY["PLANT"], "PLANT")
+        # BUILD_COOP on an empty unlocked tile if animals enabled and no coop
+        # exists yet (RM-019). Opportunistic: only if the goose pipeline is ON.
+        if animals_enabled and farm is not None and not _has_coop(farm):
+            return (_TASK_PRIORITY["BUILD_COOP"], "BUILD_COOP")
         return (0, None)
     if tile == "LOCKED":
         return (0, None)  # never actionable (M8)
@@ -200,8 +212,6 @@ def _tile_task_priority(tile, day, private, board_size, crop_mix=V1_CROPS) -> tu
         crop_data = CROPS.get(crop, {})
         age = day - tile.get("planted_day", day)
         if age >= crop_data.get("first_yield_day", 99) and tile.get("yield_units", 0) > 0:
-            # harvestable — but only if shed has room (M7), else it's not
-            # actionable this turn (the unit should DROP first instead)
             if _shed_room(private) >= tile.get("yield_units", 0):
                 return (_TASK_PRIORITY["HARVEST"], "HARVEST")
             return (0, None)
@@ -210,12 +220,20 @@ def _tile_task_priority(tile, day, private, board_size, crop_mix=V1_CROPS) -> tu
         return (0, None)
     if kind == "WEED":
         return (_TASK_PRIORITY["DIG"], "DIG")
-    # COOP/PASTURE structures (no animals yet in v1) — PLACE/COLLECT/CARE/FEED
-    # arrive with RM-016/RM-019. Not actionable in v1.
+    if kind == "COOP" and animals_enabled:
+        # PLACE a goose if the coop is empty and we have a goose in the shed
+        if "animal" not in tile and private["shed"].get("GOOSE", 0) > 0:
+            return (_TASK_PRIORITY["PLACE"], "PLACE")
     return (0, None)
 
 
-def _count_backlog(farm, private, day, board_size, crop_mix=V1_CROPS) -> int:
+def _has_coop(farm) -> bool:
+    """True if any coop exists on the farm (for the build-once logic)."""
+    return any(isinstance(t, dict) and t.get("kind") == "COOP"
+               for row in farm["tiles"] for t in row)
+
+
+def _count_backlog(farm, private, day, board_size, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED) -> int:
     """Number of URGENT unmet tasks this turn (WATER/HARVEST/DIG — priority >= DIG).
 
     Used for the hire decision (RM-016). PLANT is excluded: every empty tile
@@ -227,13 +245,14 @@ def _count_backlog(farm, private, day, board_size, crop_mix=V1_CROPS) -> int:
     urgent = _TASK_PRIORITY["DIG"]  # DIG=3 and above are urgent
     for y in range(board_size):
         for x in range(board_size):
-            p, task = _tile_task_priority(tiles[y][x], day, private, board_size, crop_mix)
+            p, task = _tile_task_priority(tiles[y][x], day, private, board_size,
+                                          farm, crop_mix, animals_enabled)
             if p >= urgent:
                 count += 1
     return count
 
 
-def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS):
+def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED):
     """Per-unit task assignment: nearest tile with the highest-priority unmet task.
 
     Structured to be reusable for hired hands (RM-016): takes a unit position
@@ -254,7 +273,8 @@ def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS):
         for y in range(board_size):
             for x in range(board_size):
                 t = tiles[y][x]
-                p, task = _tile_task_priority(t, day, private, board_size, crop_mix)
+                p, task = _tile_task_priority(t, day, private, board_size,
+                                              farm, crop_mix, animals_enabled)
                 if p == pri:
                     # PLANT only on unlocked tiles (not LOCKED) — bought land is
                     # workable, and BFS still picks the nearest empty tile first.
@@ -283,10 +303,14 @@ def _action_for_task(task):
     if task == "PLANT":
         # caller resolves which crop
         return ["PLANT", None]
+    if task == "BUILD_COOP":
+        return ["BUILD_COOP"]
+    if task == "PLACE":
+        return ["PICKUP", "GOOSE", 1]  # PLACE needs the goose carried first
     return ["PASS"]
 
 
-def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10, crop_mix=V1_CROPS, timed_sell=False) -> list:
+def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10, crop_mix=V1_CROPS, timed_sell=False, animals_enabled=ANIMALS_ENABLED) -> list:
     """Queue market orders: buy seeds, sell shed stock, buy land, hire hands."""
     orders: list = []
 
@@ -327,6 +351,14 @@ def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_han
     # WHEAT/FERTILIZER only — never premium goods. No BUY_PRODUCT order exists
     # anywhere in this code path, which enforces the rule by absence.
 
+    # BUY_ANIMAL GOOSE (RM-019): only when the pipeline is enabled and we can
+    # afford it. A goose lands in the shed; the PLACE task later moves it onto
+    # a coop. No feeding in this ticket — a placed goose will starve after 2
+    # unfed days (expected, RM-020 adds the care loop).
+    if animals_enabled and me["money"] >= GOOSE_COST:
+        if private["shed"].get("GOOSE", 0) == 0:
+            orders.append(["BUY_ANIMAL", "GOOSE", 1])
+
     # Buy land: next quadrant in the PINNED order NE->SW->SE, when cash allows
     # after keeping the reserve buffer.
     #
@@ -345,7 +377,7 @@ def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_han
     # hire up to MAX_HANDS_PER_DAY while the backlog stays high; the daily
     # cost of 1-2 hands ($1-2) is trivially cheap vs the extra actions.
     if hire_hands:
-        backlog = _count_backlog(me, private, day, board_size, crop_mix)
+        backlog = _count_backlog(me, private, day, board_size, crop_mix, animals_enabled)
         if backlog > HIRE_THRESHOLD_TASKS and me["hires_today"] < MAX_HANDS_PER_DAY:
             orders.append(["HIRE"])  # one HIRE per turn; engine processes it
 
@@ -365,7 +397,7 @@ def _step_toward(pos: tuple[int, int], target: tuple[int, int]) -> str:
     return "PASS"
 
 
-def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS):
+def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED):
     """One unit's action (farmer or hand): act in place or move toward task.
 
     Shared by farmer + hands (RM-016). Returns a farmer/hand action list, e.g.
@@ -385,7 +417,25 @@ def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS):
             return ["DROP"]
         return [_step_toward(pos, _shed_access_tile(board_size))]
 
-    assigned = _assign_task(pos, farm, private, day, board_size, crop_mix)
+    # RM-019 PLACE pipeline: if a goose is in the shed and not yet carried,
+    # walk to the shed and PICKUP it first. Once carried, walk to the coop and
+    # PLACE it. This two-step flow is the only animal logic in this ticket —
+    # no FEED/CARE/HARVEST/COLLECT (RM-020).
+    if animals_enabled:
+        carried = private["inventories"][idx].get("GOOSE", 0) if idx < len(private["inventories"]) else 0
+        if carried == 0 and private["shed"].get("GOOSE", 0) > 0:
+            if _is_shed_adjacent(pos, board_size):
+                return ["PICKUP", "GOOSE", 1]
+            return [_step_toward(pos, _shed_access_tile(board_size))]
+        if carried > 0:
+            # find nearest empty coop
+            coop = _find_empty_coop(farm, board_size)
+            if coop is not None:
+                if coop == pos:
+                    return ["PLACE", "GOOSE"]
+                return [_step_toward(pos, coop)]
+
+    assigned = _assign_task(pos, farm, private, day, board_size, crop_mix, animals_enabled)
     if assigned is None:
         return ["PASS"]
 
@@ -396,11 +446,24 @@ def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS):
                 if private["seeds"].get(crop, 0) > 0:
                     return ["PLANT", crop]
             return ["PASS"]
+        if task == "PLACE":
+            # handled above (carry-goose -> coop); fall through if no goose
+            return ["PASS"]
         return action_spec
     return [_step_toward(pos, target)]
 
 
-def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, crop_mix=V1_CROPS, timed_sell=False):
+def _find_empty_coop(farm, board_size):
+    """Nearest empty coop tile, or None (for the PLACE pipeline, RM-019)."""
+    for y in range(board_size):
+        for x in range(board_size):
+            t = farm["tiles"][y][x]
+            if isinstance(t, dict) and t.get("kind") == "COOP" and "animal" not in t:
+                return (x, y)
+    return None
+
+
+def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, crop_mix=V1_CROPS, timed_sell=False, animals_enabled=ANIMALS_ENABLED):
     """Return a valid per-turn action dict (RM-016 farm hands).
 
     ENGINE CONTRACT: the runner calls agent(observation, configuration) — TWO
@@ -426,13 +489,14 @@ def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, cro
     market = _market_orders(me, private, obs["market"], day, step=step,
                             buy_land=buy_land, hire_hands=hire_hands,
                             board_size=board_size, crop_mix=crop_mix,
-                            timed_sell=timed_sell)
+                            timed_sell=timed_sell, animals_enabled=animals_enabled)
 
     farmer_action = _unit_action((me["farmer"][0], me["farmer"][1]),
                                  me, private, day, board_size, idx=0,
-                                 crop_mix=crop_mix)
+                                 crop_mix=crop_mix, animals_enabled=animals_enabled)
     hand_actions = [_unit_action((hx, hy), me, private, day, board_size,
-                                 idx=i + 1, crop_mix=crop_mix)
+                                 idx=i + 1, crop_mix=crop_mix,
+                                 animals_enabled=animals_enabled)
                     for i, (hx, hy) in enumerate(me["hands"])]
 
     return {"farmer": farmer_action, "hands": hand_actions, "market": market}

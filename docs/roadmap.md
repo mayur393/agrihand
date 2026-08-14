@@ -251,6 +251,16 @@ assuming shared numbering.
 
 ### RM-019 — Coop/Pasture + Placement
 - BUILD_COOP / BUILD_PASTURE + PLACE logic
+- STATUS: DONE — animal pipeline added (BUY_ANIMAL GOOSE $300 + BUILD_COOP
+  opportunistic task + PLACE via carry-goose two-step), gated behind
+  ANIMALS_ENABLED=False (dormant-safe default OFF). Explicitly scoped:
+  NO FEED/CARE/HARVEST/COLLECT_FERTILIZER (RM-020 owns the daily care
+  loop) — a placed goose starves after 2 unfed days, expected not a bug.
+  Targeted micro-test confirms goose lands on a coop (pipeline works).
+  Engine accepts the BUY_ANIMAL->BUILD_COOP->PLACE sequence (smoke --full
+  150/0). No tournament/promotion this ticket — economics deferred to
+  RM-020. No regression: committed baseline still 160/0 vs starter
+  (animals OFF unchanged).
 
 ### RM-020 — Feeding & Care Discipline
 - Wheat buffer ≥ animals×2+5 (hard rule, never break for a sale)

@@ -335,7 +335,34 @@ def main() -> None:
     test_price_floor()
     test_v1_shed_room_aware_harvest()
     test_bfs_max_steps_cap()
+    test_goose_place_pipeline()
     print("micro_tests: ALL PASS")
+
+
+def test_goose_place_pipeline():
+    """RM-019: with animals enabled, the buy->build->place pipeline lands a goose
+    on a coop (mechanically works, no feeding/economics at this scope)."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import main as v1
+    from kaggle_environments import make
+
+    env = make("kaggriculture", configuration={"episodeSteps": 720, "seed": 1}, debug=True)
+    env.run([lambda obs: v1.agent(obs, animals_enabled=True), "pass"])
+
+    found = False
+    for st in env.steps:
+        for row in st[0].observation["farms"][0]["tiles"]:
+            for t in row:
+                if isinstance(t, dict) and t.get("kind") == "COOP" and "animal" in t:
+                    found = True
+                    break
+            if found:
+                break
+        if found:
+            break
+    assert found, "RM-019: goose never landed on a coop (buy->build->place pipeline failed)"
 
 
 if __name__ == "__main__":
