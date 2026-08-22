@@ -336,7 +336,68 @@ def main() -> None:
     test_v1_shed_room_aware_harvest()
     test_bfs_max_steps_cap()
     test_goose_place_pipeline()
+    test_q4_land_gate()
     print("micro_tests: ALL PASS")
+
+
+def test_q4_land_gate():
+    """RM-021: the Q4 BUY_LAND gate fires only under day<=16 AND money>=9000
+    AND post-purchase reserve>=1000 (re-derived threshold), and Q4-only mix
+    adds MELON once the full chain is owned."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import main as v1
+    import config
+
+    # Crafted rich farm: day 15, $10k, unlocked_quadrants=['NW'].
+    # Gate should fire (money 10000 >= 9000, post-purchase 9000 >= 1000).
+    me = {
+        "money": 10000.0,
+        "unlocked_quadrants": ["NW"],
+        "hires_today": 0,
+    }
+    private = {"shed": {}, "seeds": {}, "inventories": [{}]}
+    market = {"prices": {}, "inventory": {}}
+    orders = v1._market_orders(
+        me, private, market, day=15, step=0,
+        buy_land=True, hire_hands=False, board_size=10,
+        crop_mix=("WHEAT", "CARROT"), timed_sell=False, animals_enabled=False,
+    )
+    assert any(o and o[0] == "BUY_LAND" for o in orders), \
+        "RM-021: Q4 gate must fire at day 15 / $10k (BUY_LAND missing)"
+
+    # Day 17 with same money: gate must NOT fire (day > QUADRANT4_LATEST_DAY).
+    orders17 = v1._market_orders(
+        me, private, market, day=17, step=0,
+        buy_land=True, hire_hands=False, board_size=10,
+        crop_mix=("WHEAT", "CARROT"), timed_sell=False, animals_enabled=False,
+    )
+    assert not any(o and o[0] == "BUY_LAND" for o in orders17), \
+        "RM-021: Q4 gate must not fire after day 16"
+
+    # Money below threshold: must NOT fire.
+    me_poor = dict(me, money=5000.0)
+    orders_poor = v1._market_orders(
+        me_poor, private, market, day=15, step=0,
+        buy_land=True, hire_hands=False, board_size=10,
+        crop_mix=("WHEAT", "CARROT"), timed_sell=False, animals_enabled=False,
+    )
+    assert not any(o and o[0] == "BUY_LAND" for o in orders_poor), \
+        "RM-021: Q4 gate must not fire below the cash threshold"
+
+    # Q4 chain fully owned: mix must include MELON.
+    me_owned = {"unlocked_quadrants": ["NW", "NE", "SW", "SE"]}
+    mix = v1._effective_crop_mix(me_owned, ("WHEAT", "CARROT"), q4_enabled=True)
+    assert mix == ("WHEAT", "CARROT", "MELON"), \
+        f"RM-021: Q4 mix must be wheat/carrot+melon, got {mix}"
+
+    # Chain not owned: mix unchanged.
+    mix_partial = v1._effective_crop_mix(
+        {"unlocked_quadrants": ["NW", "NE"]}, ("WHEAT", "CARROT"), q4_enabled=True
+    )
+    assert mix_partial == ("WHEAT", "CARROT"), \
+        f"RM-021: Q4 mix must not add melon before the chain completes, got {mix_partial}"
 
 
 def test_goose_place_pipeline():

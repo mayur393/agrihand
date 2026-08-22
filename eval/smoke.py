@@ -1,8 +1,9 @@
 """Two-tier smoke gate for agrihand (TICKET-02, TICKET-10).
 
 Usage:
-    python eval/smoke.py --fast    # 3 episodes x 3 opponents @ 200 steps — on every non-trivial change
-    python eval/smoke.py --full    # 50 episodes x 3 opponents @ 720 steps — before promotion/submission
+    python eval/smoke.py --fast      # 3 episodes x 3 opponents @ 200 steps — on every non-trivial change
+    python eval/smoke.py --full      # 50 episodes x 3 opponents @ 720 steps — before promotion/submission
+    python eval/smoke.py --animals   # RM-020 gate: 50 animal-enabled episodes, zero escapes
 
 Both tiers run the findings hard-gate (eval/check_findings.py) FIRST — the gate
 fails if main.py/config.py depend on a mechanic whose findings.md row is unresolved.
@@ -25,6 +26,7 @@ TIERS = {
     "fast": {"episode_steps": 200, "episodes_per_opponent": 3},
     "full": {"episode_steps": 720, "episodes_per_opponent": 50},
 }
+ANIMALS_EPISODES = 50
 
 
 def _run_findings_gate() -> None:
@@ -38,6 +40,64 @@ def _run_findings_gate() -> None:
     print(res.stdout, end="")
     if res.returncode != 0:
         raise SystemExit("smoke gate aborted: findings hard-gate failed (see above).")
+
+
+def _escape_events(steps) -> list[tuple[int, int, str]]:
+    """Detect animal escapes across an episode's recorded steps.
+
+    An escape is a tile that held an animal in step N but no longer holds one in
+    step N+1, with the same (x, y) now holding the structure only. The engine
+    does exactly this on the second consecutive unfed daily refresh.
+    """
+    events: list[tuple[int, int, str]] = []
+    prev: dict[tuple[int, int], str] = {}
+    for st in steps:
+        farm = st[0].observation["farms"][0]
+        cur: dict[tuple[int, int], str] = {}
+        for y, row in enumerate(farm["tiles"]):
+            for x, t in enumerate(row):
+                if isinstance(t, dict) and "animal" in t:
+                    cur[(x, y)] = t["animal"]
+        for pos, animal in prev.items():
+            if pos not in cur:
+                events.append((pos[0], pos[1], animal))
+        prev = cur
+    return events
+
+
+def _run_animals_gate() -> int:
+    """RM-020 hard gate: zero animal escapes across 50 animal-enabled episodes.
+
+    Runs main.py with ANIMALS_ENABLED=True vs `pass` and fails loudly on any
+    escape or non-clean episode. Uses a lambda so the committed default
+    (animals OFF) is not mutated; the submission still ships dormant-safe.
+    """
+    import importlib.util
+
+    sys.path.insert(0, str(ROOT))
+    spec = importlib.util.spec_from_file_location("main", ROOT / "main.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    escapes = 0
+    failures = 0
+    for ep in range(ANIMALS_EPISODES):
+        env = kaggle_environments.make(
+            "kaggriculture",
+            configuration={"episodeSteps": 720, "seed": ep + 1},
+            debug=False,
+        )
+        env.run([lambda obs, m=mod: m.agent(obs, animals_enabled=True), "pass"])
+        events = _escape_events(env.steps)
+        if events:
+            escapes += 1
+            for x, y, animal in events:
+                print(f"[animals] ep {ep + 1}: ESCAPE {animal} at ({x},{y})")
+        if any(s.status != "DONE" for s in env.steps[-1]):
+            failures += 1
+            print(f"[animals] ep {ep + 1}: episode not clean DONE")
+    print(f"[smoke animals] {ANIMALS_EPISODES} episodes, {escapes} escapes, {failures} failures.")
+    return 1 if (escapes or failures) else 0
 
 
 def _run_tier(tier: str) -> int:
@@ -70,11 +130,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--fast", action="store_true", help="fast tier (every change)")
     ap.add_argument("--full", action="store_true", help="full tier (before promotion)")
+    ap.add_argument("--animals", action="store_true", help="RM-020 animal-escape gate (50 episodes)")
     args = ap.parse_args()
-    if not (args.fast or args.full):
-        ap.error("pass --fast or --full")
+    if not (args.fast or args.full or args.animals):
+        ap.error("pass --fast, --full, or --animals")
 
     _run_findings_gate()
+    if args.animals:
+        return _run_animals_gate()
     tier = "fast" if args.fast else "full"
     return _run_tier(tier)
 

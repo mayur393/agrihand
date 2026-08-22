@@ -11,3 +11,10 @@ __pycache__/
 
 # submission bundle (rebuilt at submit time via precheck + tar)
 submission.tar.gz
+.aider*
+
+# stray Obsidian vault (not part of the agent project; personal notes live here)
+Agrihand/
+
+# throwaway ad-hoc test files
+test_aider.txt

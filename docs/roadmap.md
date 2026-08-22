@@ -215,21 +215,24 @@ assuming shared numbering.
   at v1 scope. Hands neutral (margin 1114 vs 1196 — noise, favors
   no-hands). Promoted: (land OFF, hands OFF) = BUY_LAND=False,
   HIRE_HANDS=False. Full table + backlog-fix story in docs/plan.md.
+  RM-037 audit (2026-08-16): CONFIRMED CLEAN — the sibling
+  HIRE-truncation bug class was inert at this commit (max 6 orders
+  structurally, 3 measured across 57,520 replayed agent-turns, 0
+  truncations). "Hands neutral" stands as settled evidence.
   smoke --full 150/0; no regression.
 
-### RM-017 — Crop Diversification (Tomato, Melon)
+### RM-017 — Crop Diversification (Tomato, Melon) — ❌ RETRACTED (RM-037)
 - Ongoing vs one-time yield handling
 - Melon wave timed to town-demand troughs
-- STATUS: DONE — crop_mix parameter threaded through plant/task/market
-  logic (per-crop ongoing/one-time mechanics already engine-generic via
-  CROPS). Two separate A/Bs (80 paired games each vs starter, seed 1):
-  +tomato and +melon BOTH win 160/0 CI [0.977, 1.000] — same as
-  baseline — and margins are within seed noise (1238 baseline vs 1188
-  tomato vs 1158 melon over 8 seeds). NEGATIVE: neither crop improves
-  win rate or margin at v1's small single-farmer field. Step 3 (winning
-  crop + land + hands) NOT run per acceptance criterion — no individual
-  signal to justify it. Logged in docs/plan.md. Committed main.py stays
-  wheat/carrot baseline. smoke --full 150/0; no regression.
+- **STATUS: RETRACTED — invalid evidence (RM-037, 2026-08-16).** The
+  crop_mix parameter was non-functional due to the wheat-monoculture bug
+  (fixed at RM-036 via CROP_SPREAD): the PLANT branch always picked the
+  first crop in the mix that had seeds, so every "diversified" variant
+  silently planted ~100% WHEAT. The +tomato and +melon A/Bs never
+  actually planted tomato or melon. The negative result is invalid, not
+  a real finding. See RM-036 for the corrected, valid test (which found
+  the MELON/STRAWBERRY/WHEAT combo beats the baseline 80/0). Do not cite
+  RM-017 as settled evidence that premium crops don't help.
 
 ### RM-018 — Sale/Market Timing Policy
 - Premium goods (strawberry/melon/milk/wool): small batches, post-demand-tick
@@ -268,11 +271,28 @@ assuming shared numbering.
 - ACCEPTANCE CRITERIA: zero animal escapes across 50+ smoke episodes
   (explicit gate, not just a design intent — an escape is a
   catastrophic loss and must fail the smoke gate, not just get noted)
+- STATUS: DONE — FEED/CARE/COLLECT_FERTILIZER wired as real tasks with
+  M1 carry-wheat correction; wheat buffer enforced under RM-018's sell
+  logic AND before the first BUY_ANIMAL so the feed reserve exists
+  before purchase; BUILD_COOP priority fixed so the coop lands before
+  seed planting; `eval/smoke.py --animals` added as the zero-escape
+  hard gate (50 episodes, 0 escapes, 0 failures). Self-play A/B below.
 
 ### RM-021 — Quadrant 4 Decision
 - Buy only if day ≤16 AND money ≥6000 AND reserve ≥1000
 - Default crop: MELON (explicit, not left ambiguous)
 - Caution driven by price-crash + labor risk, not a revenue shortfall
+- STATUS: DONE — Part A: animals promotion resolved (`ANIMALS_ENABLED=True`
+  promoted, superseded crop-only baseline archived as
+  `agents/v2_animals_off_baseline.py`). Part B: Q4 threshold re-derived to
+  $9,000 (the original $6,000 assumed NE/SW already owned; the engine's
+  pinned NE→SW→SE order has no skip-to-SE path, so the honest gate is the
+  full chain $7,000 + melon seed bill $2,000). The gate is dormant at the
+  v2 income trajectory (day-16 cash ~$4.0–4.4k, peak ~$7.6k), so the Q4
+  candidate is behaviorally identical to the baseline: self-play 40/40/0
+  INCONCLUSIVE → NEGATIVE, no promotion. Logic + micro-test in place; if
+  future income changes push day-16 cash past $9k the gate activates and
+  the A/B re-runs.
 
 ## EPIC 6 — STRETCH: OPPONENT-AWARE STRATEGY
 
@@ -342,8 +362,44 @@ assuming shared numbering.
 - Log final leaderboard position vs. logged expectations
 - Retrospective: which strategy decisions held up, which didn't
 
+## NEW TICKETS — POST-ROADMAP (assigned 2026-08-16)
+
+### RM-035 — First-Hire Extraction Check
+- Side-track data-pipeline hygiene: verify `first_hire_day = 0` for 98.5%
+  of leaderboard seats is a bug or real behavior
+- STATUS: DONE — NOT A BUG. Fresh 200-seat random sample reproduces 98.5%
+  day-0; action-stream cross-check 120/120 seats agrees; top seats place
+  HIRE orders at day-0 step 1. Column trustworthy; RM-036 may use as-is.
+  Logged in findings.md §7 + plan.md.
+
+### RM-036 — Leaderboard-Informed Combo Test
+- Animal-count + melon/strawberry/wheat findings vs the committed
+  animals-enabled baseline, sequenced after RM-021 (done)
+- STATUS: DONE — PROMOTED. Combo (goose + MELON/STRAWBERRY/WHEAT +
+  crop spread + day-0 hiring) beats the animals-on baseline 80/0,
+  CI [0.954, 1.000], zero escapes. Committed defaults now
+  HIRE_HANDS=True, EARLY_HIRE=True, CROP_SPREAD=True,
+  V1_CROPS=(WHEAT, MELON, STRAWBERRY). Found + fixed the wheat
+  monoculture bug that invalidated RM-017's mix A/Bs, plus three
+  production-side wheat-reserve failure modes. Full log in plan.md;
+  findings.md §7 has the causal-evidence note.
+
+### RM-037 — RM-017 Formal Retraction + RM-016 Bug-Class Audit
+- RM-017's negative crop-diversification result was invalid evidence
+  (wheat-monoculture bug meant the mixes never actually planted tomato or
+  melon) — must be formally RETRACTED, not merely superseded, across
+  findings.md / plan.md / roadmap.md, so nobody later cites "RM-017 showed
+  melon doesn't help" as settled fact
+- Audit RM-016 (hands neutral) for the sibling HIRE-truncation bug class:
+  could the engine's 10-order market cap have dropped HIRE during its A/B?
+- STATUS: DONE — RM-017 RETRACTED in all three docs with the reason stated.
+  RM-016 CONFIRMED CLEAN: structural max 6 orders/turn at that commit,
+  empirical max 3 across 80 replayed episodes / 57,520 agent-turns,
+  0 HIRE truncations; replay reproduces the original 2x2 pattern. No
+  re-run needed. Full record in docs/plan.md RM-037 row.
+
 ## TOTAL
-11 Epics · 34 Tickets (RM-001..RM-034)
+11 Epics · 34 Tickets (RM-001..RM-034) + RM-035/RM-036/RM-037 (2026-08-16)
 
 ## Project Flow
 
@@ -386,3 +442,14 @@ Tuning & Freeze Window → Monitoring & Closeout
 - Stop Points are kept at the same high-leverage moments YieldIQ uses:
   after foundational structure, after v1 goes live, before the freeze
   window locks in final candidates.
+
+### RM-042 — Hand movement efficiency (closest-first assignment)
+- Measure the per-unit move/act/idle split before changing anything
+- Fix the dominant walking waste via closest-unit-first matching (lever #1)
+- STATUS: DONE (lever #1) — profiler shows 68.4% of unit-turns are MOVEs
+  (0% idle); closest-first matching cuts move share to 52.2% and act share
+  rises 31.6% -> 47.7%. Self-play vs committed main.py 240/0/0 across seeds
+  1/42/123 (CI [0.954, 1.000] each), zero escapes. PROMOTED (closest_first=True
+  default). Levers #2-#5 (persistent intent, walk budget, zones, runner) and
+  any MAX_HANDS_PER_DAY change deferred until the post-fix tally shows movement
+  is still binding.

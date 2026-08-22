@@ -87,12 +87,7 @@ CROP_SPREAD = True
 
 # Max hands hired per day. Fibonacci costs 1,1,2,3,5,8 — the 3rd+ hire is
 # where daily cost stops being trivially cheap; the plan targets 1-2 hands.
-# RM-042 ceiling search PROMOTED 4: closest-first cut movement 68.4% -> 52.2%,
-# then each extra hand converts remaining walking into parallel work. 3 vs 2
-# (73/80, 80/80, 77/80), 4 vs 3 (+$4,012 mean margin, never negative). 5 vs 4
-# is neutral-negative (-$103, 36/40 negative) and 6 vs 5 is a non-monotonic
-# +$1,438 single-seed anomaly — 4 is the last monotonic win, so 4 is committed.
-MAX_HANDS_PER_DAY = 4
+MAX_HANDS_PER_DAY = 2
 
 # Animal pipeline (RM-019/RM-020 / Ticket 05C) — PROMOTED (RM-021 Part A,
 # 2026-08-16). Self-play A/B vs the previous committed baseline (crop-only):
@@ -119,7 +114,6 @@ _TASK_PRIORITY = {
     "WATER": 7, "FEED": 7,
     "HARVEST": 6,
     "COLLECT_FERTILIZER": 5,
-    "FERTILIZE": 5,  # production multiplier for non-ongoing crops (MELON); RM-045
     "CARE": 4,
     "DIG": 3,
     "PLANT": 2,
@@ -228,31 +222,7 @@ def _bfs_nearest(start, tiles, board_size, is_target, max_steps=BFS_MAX_STEPS):
     return None
 
 
-def _bfs_distances(start, tiles, board_size, max_steps=BFS_MAX_STEPS):
-    """BFS distance from `start` to every reachable tile (LOCKED passable, M8).
-
-    Matches `_bfs_nearest` reachability exactly; start tile is distance 0.
-    Returns {(x, y): distance}. Tiles beyond `max_steps` are absent.
-    """
-    sx, sy = start
-    dist = {(sx, sy): 0}
-    frontier = deque([(sx, sy, 0)])
-    while frontier:
-        x, y, d = frontier.popleft()
-        if d >= max_steps:
-            continue
-        for _, dx, dy in _MOVES:
-            nx, ny = x + dx, y + dy
-            if not (0 <= nx < board_size and 0 <= ny < board_size):
-                continue
-            if (nx, ny) in dist:
-                continue
-            dist[(nx, ny)] = d + 1
-            frontier.append((nx, ny, d + 1))
-    return dist
-
-
-def _tile_task_priority(tile, day, private, board_size, farm=None, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED, fertilize_enabled=False) -> tuple[int, str]:
+def _tile_task_priority(tile, day, private, board_size, farm=None, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED) -> tuple[int, str]:
     """Highest-priority unmet task on a single tile, or (0, None).
 
     Priority (RM-014): WATER/FEED > HARVEST > COLLECT_FERTILIZER > CARE >
@@ -321,15 +291,6 @@ def _tile_task_priority(tile, day, private, board_size, farm=None, crop_mix=V1_C
                     and private["shed"].get("WHEAT", 0) < WHEAT_BUFFER_BASE + WHEAT_BUFFER_PER_ANIMAL):
                 return (_TASK_PRIORITY["HARVEST_FEED_WHEAT"], "WATER")
             return (_TASK_PRIORITY["WATER"], "WATER")
-        # RM-045 FERTILIZE: apply to non-ongoing crops (wheat/melon) in their
-        # yield-accumulation window when the tile is watered but not already
-        # fertilized. Fertilizer doubles the per-water-day yield bonus (+2 vs
-        # +1) for 3 days; only non-ongoing crops get the bonus (engine). The
-        # goose already produces free fertilizer we currently just sell.
-        if (fertilize_enabled and not crop_data.get("ongoing", False)
-                and not tile.get("fertilized_until_day", -1) >= day
-                and crop == "MELON"):
-            return (_TASK_PRIORITY["FERTILIZE"], "FERTILIZE")
         return (0, None)
     if kind == "WEED":
         return (_TASK_PRIORITY["DIG"], "DIG")
@@ -398,7 +359,7 @@ def _goose_owned(private, farm) -> bool:
     return any(inv.get("GOOSE", 0) > 0 for inv in private["inventories"])
 
 
-def _count_backlog(farm, private, day, board_size, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED, fertilize_enabled=False) -> int:
+def _count_backlog(farm, private, day, board_size, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED) -> int:
     """Number of URGENT unmet tasks this turn (WATER/HARVEST/DIG — priority >= DIG).
 
     Used for the hire decision (RM-016). PLANT is excluded: every empty tile
@@ -411,14 +372,13 @@ def _count_backlog(farm, private, day, board_size, crop_mix=V1_CROPS, animals_en
     for y in range(board_size):
         for x in range(board_size):
             p, task = _tile_task_priority(tiles[y][x], day, private, board_size,
-                                          farm, crop_mix, animals_enabled,
-                                          fertilize_enabled)
+                                          farm, crop_mix, animals_enabled)
             if p >= urgent:
                 count += 1
     return count
 
 
-def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED, claimed_targets=None, crop_spread=CROP_SPREAD, fertilize_enabled=False):
+def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED, claimed_targets=None, crop_spread=CROP_SPREAD):
     """Per-unit task assignment: nearest tile with the highest-priority unmet task.
 
     Structured to be reusable for hired hands (RM-016): takes a unit position
@@ -447,8 +407,7 @@ def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS, an
                     continue
                 t = tiles[y][x]
                 p, task = _tile_task_priority(t, day, private, board_size,
-                                              farm, crop_mix, animals_enabled,
-                                              fertilize_enabled)
+                                              farm, crop_mix, animals_enabled)
                 if p == pri:
                     # PLANT only on unlocked tiles (not LOCKED) — bought land is
                     # workable, and BFS still picks the nearest empty tile first.
@@ -464,63 +423,6 @@ def _assign_task(unit_pos, farm, private, day, board_size, crop_mix=V1_CROPS, an
             task = next(task for (x, y, task) in targets if (x, y) == tgt)
             return (tgt, task, _action_for_task(task))
     return None
-
-
-def _closest_first_assign(units, farm, private, day, board_size, crop_mix, animals_enabled, claimed_targets, fertilize_enabled=False):
-    """Assign all units to distinct task tiles, closest-unit-first (RM-042 #1).
-
-    Replaces farmer-first greedy with a single global matching: for each unit,
-    compute BFS distances to every task tile, then assign each unit to its
-    nearest *unclaimed* tile (ties broken by unit order). The result is the
-    same (target, task, action_spec) shape `_unit_action` already consumes,
-    so the caller path is unchanged; only the assignment objective changes.
-
-    `claimed_targets` is mutated in place with the chosen targets (per-turn
-    local, same contract as the greedy path). Returns a dict unit_index ->
-    (target, task, action_spec) or None.
-    """
-    tiles = farm["tiles"]
-
-    # Enumerate all task tiles once, with their (priority, task, action_spec).
-    task_tiles = []  # (x, y, priority, task)
-    for y in range(board_size):
-        for x in range(board_size):
-            t = tiles[y][x]
-            p, task = _tile_task_priority(t, day, private, board_size,
-                                          farm, crop_mix, animals_enabled,
-                                          fertilize_enabled)
-            if p == 0:
-                continue
-            if task == "PLANT" and not _in_field((x, y), tiles):
-                continue
-            task_tiles.append((x, y, p, task))
-
-    assigned = {}
-    for ui, pos in enumerate(units):
-        if not task_tiles:
-            break
-        dist = _bfs_distances(pos, tiles, board_size)
-        # nearest unclaimed tile, keyed by (distance, -priority) so a higher
-        # priority breaks a distance tie.
-        best = None
-        best_key = None
-        for x, y, pri, task in task_tiles:
-            d = dist.get((x, y))
-            if d is None:
-                continue
-            key = (d, -pri)
-            if best_key is None or key < best_key:
-                best_key = key
-                best = ((x, y), task)
-        if best is None:
-            assigned[ui] = None
-            continue
-        target, task = best
-        assigned[ui] = (target, task, _action_for_task(task))
-        claimed_targets.add(target)
-        task_tiles = [(x, y, p, t) for (x, y, p, t) in task_tiles
-                      if (x, y) != target]
-    return assigned
 
 
 def _action_for_task(task):
@@ -547,12 +449,10 @@ def _action_for_task(task):
         return ["CARE"]
     if task == "COLLECT_FERTILIZER":
         return ["COLLECT_FERTILIZER"]
-    if task == "FERTILIZE":
-        return ["FERTILIZE"]
     return ["PASS"]
 
 
-def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10, crop_mix=V1_CROPS, timed_sell=False, animals_enabled=ANIMALS_ENABLED, early_hire=EARLY_HIRE, max_hands_per_day=MAX_HANDS_PER_DAY) -> list:
+def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, board_size=10, crop_mix=V1_CROPS, timed_sell=False, animals_enabled=ANIMALS_ENABLED, early_hire=EARLY_HIRE) -> list:
     """Queue market orders: buy seeds, sell shed stock, buy land, hire hands."""
     orders: list = []
 
@@ -564,13 +464,11 @@ def _market_orders(me, private, market, day, step=0, buy_land=BUY_LAND, hire_han
     if hire_hands:
         early = early_hire and day <= 1
         backlog = _count_backlog(me, private, day, board_size, crop_mix, animals_enabled)
-        if (early or backlog > HIRE_THRESHOLD_TASKS) and me["hires_today"] < max_hands_per_day:
+        if (early or backlog > HIRE_THRESHOLD_TASKS) and me["hires_today"] < MAX_HANDS_PER_DAY:
             orders.append(["HIRE"])  # one HIRE per turn; engine processes it
 
     # Buy seeds for the crops in the mix, up to a small working stock.
-    # dict.fromkeys dedupes a weighted mix (repeated entries) so a duplicate
-    # crop does not queue duplicate BUY_SEED orders (RM-041).
-    for crop in dict.fromkeys(crop_mix):
+    for crop in crop_mix:
         if private["seeds"].get(crop, 0) == 0 and me["money"] >= SEED_COSTS[crop]:
             orders.append(["BUY_SEED", crop, 1])
     # RM-036: when the wheat floor is broken (animals enabled), accumulate
@@ -688,7 +586,7 @@ def _step_toward(pos: tuple[int, int], target: tuple[int, int]) -> str:
     return "PASS"
 
 
-def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED, claimed_targets=None, crop_spread=CROP_SPREAD, assigned_override=None, fertilize_enabled=False):
+def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS, animals_enabled=ANIMALS_ENABLED, claimed_targets=None, crop_spread=CROP_SPREAD):
     """One unit's action (farmer or hand): act in place or move toward task.
 
     Shared by farmer + hands (RM-016). Returns a farmer/hand action list, e.g.
@@ -697,9 +595,6 @@ def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS, 
     `claimed_targets` (05E): optional shared set; targets chosen by earlier
     units are excluded from this unit's selection, and this unit's chosen
     target is added to the set after assignment (per-turn local, never global).
-    `assigned_override` (RM-042): optional precomputed (target, task, action_spec)
-    from the closest-first global matching; when set, this unit acts on it
-    instead of recomputing `_assign_task` for itself.
     """
     fx, fy = pos
     tile = farm["tiles"][fy][fx]
@@ -760,23 +655,18 @@ def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS, 
     # M1: FEED requires carried wheat. If the assigned task is FEED and this
     # unit isn't carrying wheat, first go to the shed and PICKUP one. Then walk
     # to the animal and FEED. This is the same carry-then-act pattern as PLACE.
-    if assigned_override is not None:
-        assigned = assigned_override
-    else:
-        assigned = _assign_task(
-            pos,
-            farm,
-            private,
-            day,
-            board_size,
-            crop_mix,
-            animals_enabled,
-            claimed_targets,
-            crop_spread,
-            fertilize_enabled,
-        )
+    assigned = _assign_task(
+        pos,
+        farm,
+        private,
+        day,
+        board_size,
+        crop_mix,
+        animals_enabled,
+        claimed_targets,
+        crop_spread,
+    )
     on_feed_mission = False
-    on_fertilize_mission = False
     if assigned is not None and animals_enabled:
         target, task, _ = assigned
         if task == "FEED":
@@ -785,16 +675,6 @@ def _unit_action(pos, farm, private, day, board_size, idx=0, crop_mix=V1_CROPS, 
             if carried_wheat == 0 and private["shed"].get("WHEAT", 0) > 0:
                 if _is_shed_adjacent(pos, board_size):
                     return ["PICKUP", "WHEAT", 1]
-                return [_step_toward(pos, _shed_access_tile(board_size))]
-        # RM-045 FERTILIZE: carry-then-act like FEED. FERTILIZE consumes 1
-        # carried FERTILIZER (engine). Pick it up at the shed first, then walk
-        # to the fertilizable melon tile.
-        if task == "FERTILIZE":
-            on_fertilize_mission = True
-            carried_fert = private["inventories"][idx].get("FERTILIZER", 0) if idx < len(private["inventories"]) else 0
-            if carried_fert == 0 and private["shed"].get("FERTILIZER", 0) > 0:
-                if _is_shed_adjacent(pos, board_size):
-                    return ["PICKUP", "FERTILIZER", 1]
                 return [_step_toward(pos, _shed_access_tile(board_size))]
 
     # RM-036 guard: when animals are enabled and this unit is NOT on a FEED
@@ -875,7 +755,7 @@ def _effective_crop_mix(me, crop_mix=V1_CROPS, q4_enabled=True) -> tuple:
     return tuple(crop_mix)
 
 
-def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, crop_mix=V1_CROPS, timed_sell=False, animals_enabled=ANIMALS_ENABLED, early_hire=EARLY_HIRE, crop_spread=CROP_SPREAD, closest_first=True, max_hands_per_day=MAX_HANDS_PER_DAY, fertilize_enabled=False):
+def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, crop_mix=V1_CROPS, timed_sell=False, animals_enabled=ANIMALS_ENABLED, early_hire=EARLY_HIRE, crop_spread=CROP_SPREAD):
     """Return a valid per-turn action dict (RM-016 farm hands).
 
     ENGINE CONTRACT: the runner calls agent(observation, configuration) — TWO
@@ -904,34 +784,22 @@ def agent(obs, configuration=None, buy_land=BUY_LAND, hire_hands=HIRE_HANDS, cro
 
     # Per-turn claimed targets (05E): local to this agent() call, empty every
     # turn. Farmer picks first, then each hand picks from the remaining targets.
-    # RM-042 closest_first: precompute a global closest-unit-first matching so
-    # the farmer can't steal a hand's nearby tile and force a long second walk.
     claimed_targets = set()
-    units = [(me["farmer"][0], me["farmer"][1])] + [(hx, hy) for hx, hy in me["hands"]]
-    overrides = None
-    if closest_first:
-        overrides = _closest_first_assign(
-            units, me, private, day, board_size, effective_mix,
-            animals_enabled, claimed_targets, fertilize_enabled)
 
     market = _market_orders(me, private, obs["market"], day, step=step,
                             buy_land=buy_land, hire_hands=hire_hands,
                             board_size=board_size, crop_mix=effective_mix,
                             timed_sell=timed_sell, animals_enabled=animals_enabled,
-                            early_hire=early_hire, max_hands_per_day=max_hands_per_day)
+                            early_hire=early_hire)
 
     farmer_action = _unit_action((me["farmer"][0], me["farmer"][1]),
                                  me, private, day, board_size, idx=0,
                                  crop_mix=effective_mix, animals_enabled=animals_enabled,
-                                 claimed_targets=claimed_targets, crop_spread=crop_spread,
-                                 assigned_override=overrides.get(0) if overrides else None,
-                                 fertilize_enabled=fertilize_enabled)
+                                 claimed_targets=claimed_targets, crop_spread=crop_spread)
     hand_actions = [_unit_action((hx, hy), me, private, day, board_size,
                                  idx=i + 1, crop_mix=effective_mix,
                                  animals_enabled=animals_enabled,
-                                 claimed_targets=claimed_targets, crop_spread=crop_spread,
-                                 assigned_override=overrides.get(i + 1) if overrides else None,
-                                 fertilize_enabled=fertilize_enabled)
+                                 claimed_targets=claimed_targets, crop_spread=crop_spread)
                     for i, (hx, hy) in enumerate(me["hands"])]
 
     return {"farmer": farmer_action, "hands": hand_actions, "market": market}

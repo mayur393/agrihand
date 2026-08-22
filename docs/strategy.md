@@ -45,6 +45,9 @@ So the case for caution does **not** rest on a revenue shortfall. It rests on:
 
 Hands-cost note (TICKET-16 — corrected): the earlier writeup's "sweeping 7000 additionally funds ~2 hands' daily cost" misread the fibonacci schedule — 2 hands cost **$2 total** that day (1,1,2,...), not ~$1k — and is dropped. Labor cost is real but per-day-cheap; the real cost is *opportunity* (actions diverted from harvest/liquidation).
 
+--- SUPERSEDED 2026-08-16 (RM-021) ---
+The $6,000 threshold above assumed NE/SW already owned. The engine's land order is pinned NE→SW→SE with no skip, and the committed baseline owns nothing — the honest gate is the full chain: $1k+$2k+$4k+$2k melon seeds = $9,000. `QUADRANT4_CASH_THRESHOLD` is now **9000** in config.py (with `QUADRANT4_LATEST_DAY=16`, `QUADRANT4_RESERVE=1000`). Measured day-16 cash under the committed baseline (~$4.0–4.4k, 6 seeds) never reaches this, so the gate is dormant-but-correct rather than dead: it activates automatically if a future income change (e.g. RM-036's combo test) pushes cash past $9k. The original TICKET-16 reasoning above is kept as-is as the record of how the mistake happened.
+
 ## Opponent-aware sell timing — noise caveat (TICKET-05)
 
 Scoped: Aug 25–Sep 10 only, per the PLAN.md §6 timeline row *"Aug 25 – Sep 10 | Cows/sheep + care/fertilizer. **Stretch window: opponent-aware premium sale timing (TICKET-05)...**"* — this feature must not be built or CI-tested before that phase gate. Flag: `OPPONENT_AWARE_SELL_TIMING`, default `False`.

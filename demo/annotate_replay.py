@@ -6,7 +6,7 @@ covering every engine action and entity (crops, animals, products, shops,
 fertilizer, shed, land, market). Stdlib-only; read-only on the replay.
 
 Usage:
-    .venv/bin/python scripts/annotate_replay.py <replay.json> > annotated.json
+    .venv/bin/python demo/annotate_replay.py <replay.json> > annotated.json
 Output: JSON list, one object per step:
     {"step":N, "day":D, "hour":H,
      "players": [{"name":..., "caption":[...], "money":..., "shed":..., "seeds":...}],

@@ -31,7 +31,7 @@ VISUALIZER = (
     ROOT
     / ".venv/lib/python3.12/site-packages/kaggle_environments/envs/kaggriculture/visualizer/default/dist/index.html"
 )
-ANNOTATOR = ROOT / "scripts" / "annotate_replay.py"
+ANNOTATOR = ROOT / "demo" / "annotate_replay.py"
 
 # Subtitle overlay with playback controls. The bundled visualizer does NOT
 # self-play in a standalone page: it renders and waits for a parent to send
@@ -198,7 +198,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--steps", type=int, default=720)
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--agent", default="agents/demo_hustler.py")
+    ap.add_argument("--agent", default="demo/demo_hustler.py")
     ap.add_argument("--opponent", default="starter")
     args = ap.parse_args()
 
@@ -234,3 +234,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
