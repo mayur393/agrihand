@@ -17,6 +17,4 @@ See [workflow/taste.md](workflow/taste.md)
 - Treated hands/hired labor as the leverage point: each hand performs its own action in parallel with the farmer per turn, so more hands means more work done per fixed step count (cost is only the hire fee, not time/turns) — the real lever is productive actions per turn, and hand-movement/task-assignment should be the focus of optimization planning. Confidence: 0.70
 
 # submission
-- kaggle_environments loads the LAST callable defined in the submission module as the agent (`get_last_callable` returns `[v for v in env.values() if callable(v)][-1]`); a docstring warning is not enough — keep `agent()` as the last function in main.py, with all helpers defined before it, and enforce via an automated last-callable check. Confidence: 0.85
-- The Kaggle runner calls `agent(observation, configuration)` with TWO positional args, not one; a one-arg `agent(obs, ...)` signature silently feeds the config dict into whatever the 2nd param is (a truthy dict), so always define `def agent(obs, configuration=None, ...)` and enforce via an automated signature check. Confidence: 0.75
-
+See [submission/taste.md](submission/taste.md)
