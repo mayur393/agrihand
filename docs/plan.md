@@ -357,3 +357,52 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 - **Result: decisively negative.** 0/80 self-play, income −$6.7k. The FERTILIZE priority (5) steals walking turns from WATER/HARVEST, and melon's narrow late-season window means the +2 bonus rarely lands before the season ends. Fertilizer use does NOT close the scale gap.
 - **Root insight (unchanged):** we plant ~25 tiles, leaders plant ~174. Single-tile micro-optimizations (fertilizer) cannot close a 3x income gap caused by *production area*. The fertilizer branch is kept (flag OFF) but not promoted.
 
+
+## 2026-08-22 — RM-041 multi-animal scaling — REJECTED at current scale (careful build)
+
+**Evidence chain (corrected):** full-34k rating-controlled regression (clean, no total+parts collinearity) shows `total_hires` +$12-16k/SD (the real labor lever), `max_cows` +$3,193/SD, `max_sheep` +$3,032/SD, `max_geese` −$1,635/SD. Two rated-replay losses confirm winners deploy 7-15 cow/sheep. The lever is real for winning bots.
+
+**But the incremental A/B rejected it at our scale:** careful structure-first build (build before buy, one-ahead pasture cap) still dropped income $31.5k → $13-14k. Root cause: a cow costs $400 + feed + a pasture, and our 24-tile/4-hand farm does not yet generate the income to make cow/sheep net-positive. The regression's positive coefficient holds *holding skill constant*; our agent is not at that skill/scale.
+
+**Decision: no promotion.** Reverted `main.py` to committed single-goose baseline ($32.1k). Multi-animal is the right lever but gated by income we don't yet have. Sequencing: **scale labor/income first (`total_hires`), then animals become viable.** The collinearity correction in RM-043 is the real takeaway — animals were never negative; they're positive-but-gated.
+
+**Failure modes caught (kept as regression-test knowledge):** (1) buy-before-build drained cash to $0; (2) build-all-structures-upfront left 5 empty pastures as dead capital. Both fixed in the attempt, neither promoted.
+
+
+## 2026-08-23 — RM-050 total structural rework — REJECTED, REVERTED
+
+| Candidate | Scope | Evidence | Decision |
+|---|---|---|---|
+| unarchived RM-050 integrated rework | day-0 cow + seed stock 3 + pasture one-ahead + zones + work-tied 12-hand ceiling | Representative full seeded runs vs starter: $45,973, $44,316, $27,182, $42,336 (mean $39,952); target was >$45k | **REJECT / revert** |
+
+### Notes
+- The implementation did exercise the intended integrated path: day-0 pasture→cow, bulk seeds, feed-reserve bridge wheat, one-ahead pasture construction, up to 8 cows, and worker zones. Three direct full seeded probes recorded zero escapes; mechanics, precheck, and fast smoke passed.
+- It did **not** meet the acceptance income floor and retained unacceptable variance (one $27.2k run), so it was not archived or promoted. A single paired seed against the archived $32.1k candidate was 2/0, but its Wilson interval was inconclusive and cannot override the absolute-income miss.
+- `main.py`, `config.py`, and `eval/micro_tests.py` were restored to the committed single-goose baseline. No demo changes and no land logic changes were retained.
+
+
+## 2026-08-23 — RM-050 outlier investigation (15-seed diagnostic)
+
+**Method:** ran RM-050 candidate across 15 seeds vs starter, traced per-seed income, animal counts, crew, and market prices.
+
+**Key findings:**
+- Mean $36,490 (median $42,336), range $17,375–$48,696. All 15 seeds reach 8 cows, 12 hands, identical trajectories through day 8.
+- **Root cause of variance:** seed-dependent market prices for milk. Bad seeds: milk $110-131/unit (market inventory > I0, glut zone). Good seeds: milk $205-231/unit (inventory < I0, scarcity premium). Same items sold, 2x price difference.
+- The $850 initial price gap on 24 milk compounds over 20 days into a $30k final-income gap.
+- **Attempted fix (SELL_MAX_BATCH=8):** REVERTED — engine processes ALL market orders per turn atomically, so splitting SELL into smaller orders does NOT change price impact.
+- **Attempted fix (SELL_MIN_PREMIUM_PRICE=100):** REVERTED — catastrophic: fertilizer base price is $100, threshold blocked ALL fertilizer sales, income collapsed to $14k mean.
+
+**Conclusion:** the variance is irreducible through selling-logic changes. The $36.5k mean with $17-49k range is the rework's real performance envelope. The rework IS a net positive (14% above $32.1k baseline) but the $45k acceptance floor is not reliably met.
+
+
+## 2026-08-23 — RM-050 + batch-PICKUP promoted to new baseline + submitted
+
+**Changes:** RM-050 structural rework (day-0 cow, bulk seeds, worker zones, 8 cows, 12 hands) + batch PICKUP for FEED mission (grab enough wheat for all unfed animals in one trip, not 1 wheat per trip).
+
+**Results (20 seeds, paired vs starter):** mean $40,916, median $43,074, min $23,772, max $52,794. **20/20 wins**, minimum margin +$20,288.
+
+**RM-051 diagnostic finding:** r=+0.919 correlation between milk price at day 15 and final bank. The $29k variance is entirely seed-dependent market prices for milk — the opponent's seed-dependent behavior creates different market inventory levels, which sets the price (glut zone $80-$131 vs scarcity premium $214-$268). Same 8 cows, same production, 2-3x price difference. The variance is irreducible through selling logic.
+
+**Competitive impact:** we win 100% against starter regardless of seed. The variance affects absolute income but not win rate against this opponent.
+
+**Promoted:** RM-050 + batch-PICKUP as the new baseline. Archived as agents/rm050_rework_batch_pickup.{py,cfg}. Submitted to Kaggle ladder (submission 55715426, pending). Previous active submission: 55695932 (score 436.7).

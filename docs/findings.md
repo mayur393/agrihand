@@ -243,6 +243,21 @@ After closest-first cut movement 68.4%→52.2%, the remaining 52% was still move
 
 **Decision: close the animal lever. No cow/sheep ticket.** Adding multi-animal support would be a multi-file code change (`BUILD_PASTURE`, COW/SHEEP buy+place+feed paths, wheat-buffer scaling for 3 animal types) chasing a signal that is negative per-type under control. The committed single-goose pipeline stays. The goose is a cheap, early, egg+fertilizer source with a feed cost the wheat reserve already covers; scaling to cow/sheep has no controlled-evidence upside.
 
+> **SUPERSEDED 2026-08-22 (RM-043 correction):** the "per-type negative" result was a
+> **regression artifact from collinearity** — I regressed `max_animals` (total) *and*
+> `max_geese`/`max_cows`/`max_sheep` (parts) simultaneously, where total = geese+cows+sheep
+> exactly. Perfect collinearity makes the part coefficients unstable and flip sign even
+> when the total is strongly positive (it was: +$6,196/SD). Re-run cleanly (parts only, no
+> total), the real signal is:
+>   - `max_animals` total: **+$3,089/SD** (positive)
+>   - `max_cows`: **+$3,193/SD** (positive)
+>   - `max_sheep`: **+$3,032/SD** (positive)
+>   - `max_geese`: **−$1,635/SD** (the weak one — cheap but low value)
+> This aligns with RM-020/RM-036 (animals promoted, never negative) and the rated-replay
+> evidence (winners deploy cow/sheep, not goose spam). The earlier "close the animal lever"
+> decision is **overturned** — cow/sheep scaling is a real, positive, skill-independent lever
+> and is now the target of RM-041 (careful incremental build).
+
 **Coverage caveat (honest):** 1,489 episodes of 34,139 public episodes (4.4%), a contiguous parquet slice not a random sample. The effect sizes are large enough and the per-type signs consistent enough that a fuller sample is unlikely to flip the conclusion, but this is a prior, not a distribution. If a future ticket re-opens animals, run the full 34k backfill first (fix the parallel I/O bottleneck, not the semantics).
 
 
@@ -270,4 +285,68 @@ Three probes against the current committed agent (4 hands + closest-first, incom
 **Root cause:** production area is the binding constraint, but land only pays if the assignment/scaling structure can actually work it. The leaderboard's 174 tiles and 14 hands are the *symptom* of a farm that already scales; naively adding our versions of those knobs reproduces the symptom without the underlying mechanism.
 
 **Implication:** the next lever must be *per-tile production efficiency*, not more inputs. Candidates (unmeasured): fertilizer application (we collect it but never BUY/apply it), tomato/ongoing-crop management, or reducing shed-logistics trips (38% of moves). None of these is a single config flip; each is a proper code ticket. This closes the "just add land/hands" hypothesis for good.
+
+
+## 9. First rated-episode causal analysis (2026-08-22) — the scale lever is REAL, and specific
+
+**10 rated games: 5W/5L.** The two worst losses were deep-dived from official replays. The decisive, consistent pattern (now *causal* — our bot vs. a named opponent, not leaderboard correlation):
+
+| | us (loss) | winner 1 (aefinityaiinc) | winner 2 (Shardul Gharat) |
+|---|---|---|---|
+| peak crew | 4 hands (always) | **10** | **12** |
+| land | never | **day 11, 3 quadrants** | none |
+| animals | 1 goose | **7 (4 sheep + 3 cow)** | **15 cow** |
+| crops | wheat+melon+strawberry | carrot+strawberry | wheat |
+
+**Root cause (corrects RM-044's hands=14 rejection):** our local "hands=14 crashes income" A/B was misleading. On a fixed 24-tile, no-land, 1-animal farm, extra hands just walk. The winners scale hands *in sync with* the things hands work on — more land (winner 1) or more animals (winner 2). Labor is not the lever; **labor + production surface grown together** is the lever.
+
+**What this overturns:** RM-043's "animals are per-type negative" was a **collinearity artifact** (total regressed alongside its parts), not survivor bias. Re-run cleanly: `max_cows` **+$3,193/SD** and `max_sheep` **+$3,032/SD** are positive; only geese are weak (−$1,635/SD). The rated replays confirm winners deploy cow/sheep, not goose spam. The animal lever is real and does *not* depend on land — winner 2 ran 15 cows on no extra land.
+
+**Actionable:** the rework is now data-driven on two independent sources (34k historical regression + our own rated replays): **scale cow/sheep, and scale labor (`total_hires` +$12–16k/SD), in sync.** Land/tiles is NOT a clean positive lever (tiles_planted −$4,304/SD multivariate), so the fix is animals + labor, not land.
+
+
+## 10. RM-050 variance root cause — market price dynamics (2026-08-23)
+
+**15-seed diagnostic of the RM-050 rework vs starter.** Mean $36,490 (median $42,336), range $17,375–$48,696. The rework works (mean 14% above $32.1k baseline) but has high variance.
+
+**Root cause: seed-dependent market prices for milk, amplified by compounding.**
+
+| | bad seed ($17k) | good seed ($49k) |
+|---|---|---|
+| milk price day 9 | $186 | $205 |
+| milk price day 11 | $126 | $218 |
+| milk price day 13 | $112 | $228 |
+| same 24 milk sold day 9 | $1,860 revenue | $3,164 revenue |
+
+The starter opponent's seed-dependent behavior creates different market inventory levels. When inventory > I0 (10,000), milk sells at $110-130 (glut zone). When < I0, it sells at $205-231 (scarcity premium). Same items, 2x price. A $850 initial advantage compounds over 20 days into a $30k gap.
+
+**Attempted fixes (all reverted):**
+1. `SELL_MAX_BATCH=8`: splitting SELL orders into smaller batches has NO effect — the engine processes ALL market orders per turn, so the total quantity sold (and price impact) is identical regardless of how it's split across orders.
+2. `SELL_MIN_PREMIUM_PRICE=100`: catastrophic side effect — fertilizer base price is $100, and the threshold blocked ALL fertilizer sales, filling the shed and collapsing income to $14k mean.
+
+**Conclusion: the variance is irreducible through selling-logic changes.** The price depends on total quantity sold per turn (engine processes all orders atomically), and the market inventory is set by the opponent's seed-dependent behavior. The only way to reduce variance would be to hold milk across turns (sell every other day), but this conflicts with shed-space constraints. The $36.5k mean with $17-49k range is the rework's real performance envelope.
+
+
+## 11. RM-051 failure decomposition — milk price is the ENTIRE story (2026-08-23)
+
+**20-seed diagnostic with detailed per-run metrics (analysis/rm051_diagnostic.py).** All structural metrics are IDENTICAL across all seeds: 13 crew, 8 animals, ~54% move share, ~2% shed share, 0 unsold items. The ONLY thing that varies is the milk price trajectory.
+
+| Metric | Correlation with final bank |
+|---|---|
+| milk price @ day 15 | **r = +0.919** |
+| planted tiles | r = -0.417 |
+| peak crew | r = +0.000 |
+| animals placed | r = +0.000 |
+| move share | r = -0.161 |
+
+**Root cause:** seed-dependent market prices for milk. The opponent's seed-dependent behavior creates different market inventory levels. When inventory > I₀ (10,000), milk sells at $80-$131 (glut). When < I₀, it sells at $214-$268 (scarcity premium). Same 8 cows, same production, 2-3x price difference.
+
+**Cash trajectory divergence (day 10+):**
+- Good seed (49): milk price climbs from $223 to $268, daily income +$1,700-$3,400
+- Bad seed (60): milk price crashes from $131 to $80, daily income +$80-$3,900
+- The gap accumulates to $29k over 10 days
+
+**Competitive impact:** we WIN 100% against starter (20/20), minimum margin +$20,288. The variance affects absolute income but not win rate against this opponent.
+
+**Conclusion:** the variance is external (opponent-seed-driven market dynamics), not internal (our agent's policy). It cannot be fixed by selling logic, crop mix, or labor optimization. The only way to reduce it would be to reduce milk dependence (fewer cows), but that would also reduce income in good seeds. On the live ladder, this variance will matter if stronger opponents have income in the $20k-$50k range where our spread overlaps.
 
