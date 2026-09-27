@@ -1,5 +1,7 @@
 # Agrihand — Kaggriculture Competition Agent
 
+🤖 **Vibe coded:** built with AI coding assistants.
+
 Autonomous heuristic agent for Kaggle's Kaggriculture simulation competition (two-player farming sim, 720 turns, winner = most banked coins, Elo-style ladder). Solo project: rule-based policy, stdlib-only submission bundle, evaluated locally with a seeded tournament harness before every submission. Strategy lives in `PLAN.md`; the running experiment log is `docs/plan.md`; mechanics and timings are verified in `docs/findings.md`.
 
 **Attribution:** this project *studies* public competition code and documentation but writes its own agent. The public MIT-licensed [Seyamalam/Kaggriculture](https://github.com/Seyamalam/Kaggriculture) repo (docs + harness) is used as a reference for mechanics and as a tournament opponent only — its `main.py` is never copied into our submission. Our own baseline starts from `~/Downloads/main.py` and is ported into `main.py` with all literals extracted to `config.py` (TICKET-06).
