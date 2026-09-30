@@ -20,7 +20,7 @@ python eval/tournament.py       # Wilson-CI promotion decision (TICKET-01)
 
 # Submit
 scripts/build_submission.sh     # precheck + submission.tar.gz (main.py + config.py at root)
-kaggle competitions submit kaggriculture -f submission.tar.gz -m "v4 value-based"
+kaggle competitions submit kaggriculture -f submission.tar.gz -m "agrihand v2"
 ```
 
 ## Repo layout
@@ -31,7 +31,8 @@ See `PLAN.md` §2. Short version: `main.py` + `config.py` ship in the submission
 
 | Version | Files | sha256 (main) | Changelog |
 |---|---|---|---|
-| v4_value_based | `agents/v4_value_based.{py,cfg}` | `11b57623…67ef` | 2026-09-30 rebuild: every decision priced in projected dollars (market model, crop/animal/land/crew planning, demand-matched selling, value-per-turn routing). 12/0 vs RM-050 live bot, starter and two mid-strength public bots; 0/20 vs public V21 (gap −$20.7k). See docs/plan.md 2026-09-30. |
+| agrihand_v2 | `agents/agrihand_v2.{py,cfg}` | `b4829109…e4ae` | 2026-09-30: v1 + top-bot research: sell-first market ordering and return-per-dollar animal funding. Beats v1 55/25 (80 games); 20/0 vs RM-050, starter and two mid-strength public bots; loses to public V21 by ~$20k. Other researched techniques are implemented as config knobs, off (measured worse). See docs/plan.md. |
+| agrihand_v1 (v4 value-based) | `agents/agrihand_v1.{py,cfg}` | `11b57623…67ef` | 2026-09-30 rebuild: every decision priced in projected dollars (market model, crop/animal/land/crew planning, demand-matched selling, value-per-turn routing). 12/0 vs RM-050 live bot, starter and two mid-strength public bots; 0/20 vs public V21 (gap −$20.7k). See docs/plan.md 2026-09-30. |
 | rm050_rework_batch_pickup | `agents/rm050_rework_batch_pickup.{py,cfg}` | — | RM-050 live bot (submission 55715426), superseded by v4. |
 | v3_combo_ladder_v1 | `agents/v3_combo_ladder_v1.{py,cfg}` | `900adb48…4511` | RM-039 live-rated ladder entry. Full progression: v1 wheat/carrot → animals promoted (RM-021) → MELON/STRAWBERRY/WHEAT + early hire + crop spread combo promoted (RM-036) → robustness confirmed 124/0, Wilson CI [0.970, 1.000] (RM-038). |
 | v3_animals_on_baseline | `agents/v3_animals_on_baseline.py` | `48c70330…255c` | Superseded animals-ON baseline (wheat/carrot, no hands), archived at RM-036. Current committed main.py = this + RM-036 combo promoted: MELON/STRAWBERRY/WHEAT mix + early hire + crop spread. Self-play 80/0 vs this baseline, CI [0.954, 1.000], zero escapes. |

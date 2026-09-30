@@ -411,7 +411,7 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 
 **Why:** the 2026-09-30 audit found the RM-050 live bot blind to prices/calendar/opponent, losing 7–9 cows per game to a feed bug (hidden by a broken `smoke.py --animals` gate that crashed the agent on turn 1), and only ~25% of worker-turns doing work. v4 is a rewrite: every decision is scored in projected dollars (design: `docs/strategy.md`, "v4 value-based rebuild").
 
-**Candidate:** `agents/v4_value_based.{py,cfg}` (= `main.py`/`config.py`; main sha256 `11b57623…67ef`, config `21894a3a…d4d2`, bundle `08e04338…93b0`). Engine 1.32.6. Paired, seat-swapped games (both seats per seed), seeds 1–N.
+**Candidate:** `agents/agrihand_v1.{py,cfg}` (= `main.py`/`config.py`; main sha256 `11b57623…67ef`, config `21894a3a…d4d2`, bundle `08e04338…93b0`). Engine 1.32.6. Paired, seat-swapped games (both seats per seed), seeds 1–N.
 
 | Opponent | Games | W/L/T | Wilson 95% CI | Mean bank v4 / opp | Mean gap |
 |---|---|---|---|---|---|
@@ -424,3 +424,35 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 **Decision: PROMOTE** (LB > 0.50 vs the live bot, `starter` and both mid-strength bots). **Known gap:** loses every game to the public top-replay bot (V21), by ~$20k. Tuning route vs V21 (mean gap, 10 seeds): first build −$31.3k (seeds 1–10) → +day-0 animal buy while pasture is built → demand-matched selling (reserve 0.8×base) → `MIN_CREW=8` −$26.7k → `OPENING_ANIMALS=3` + `OPPONENT_SUPPLY_WEIGHT=1.0` −$20.7k. Tested and rejected (no gain beyond noise or worse): labor cost 2/8, animal min profit 0/600, max animals 16, sell reserve 0.6/0.7/0.9/1.0, land ROI 1.0, land free-tile trigger 8, sticky 1.0/1.6, demand-weighted seed reserve (all game), crew 6/10/12, turns-per-job 4.5, max hire cost 144.
 
 **Gates:** `precheck_submission.py` OK; `check_findings.py` OK; `smoke.py --fast` 9/0; `micro_tests.py` ALL PASS (stale RM-019/021/012/008 agent tests replaced by v4 checks: price model == engine, no overplanting, animals placed, no escapes); extracted-bundle self-play via file path: both DONE. `smoke.py --animals` lambda bug fixed (the agent is now called with the engine's own arguments).
+
+## 2026-09-30 — v2 (agrihand_v2): top-bot research → PROMOTED over v1
+
+**Research source.** Kaggle itself is unreachable from the dev container (network policy) and replay downloads need the account's credentials, so the evidence is the public Seyamalam/Kaggriculture repo (MIT/Apache): its V18/V21 bot embeds four top-ladder players' recorded schedules, and `reports/v18-public-loss-analysis.md` breaks down real top-ladder matches (winners bank $112k–$139k; per game ~200–230 MILK, ~140–170 WOOL, ~260–275 STRAWBERRY, ~115–125 MELON). The shared top-bot recipe: 8 cows + 6 sheep (≤3 bought/day, no geese), ~34–44 strawberries planted staggered from day 4 and **fertilized on production days** (~7 strawberries/plant vs our 3.5), a small melon opening (~9) plus quick wheat, NE land ~day 5 / SW ~day 10, 12–13 hands, demand-matched premium sales, and "market interference" (sell before the rival within a turn).
+
+**What was implemented and measured** (10 paired seeds vs V21 unless noted; v1 baseline gap −$20.7k at 10 seeds, −$24.9k at 30 seeds; the metric is chaotic, so ±$5k at 10 seeds is noise):
+
+| Technique | Knob(s) | Result | Kept? |
+|---|---|---|---|
+| Sell before hires/buys within a turn (market interference) | `SELL_FIRST=True` | −$19.2k (vs −$20.7k); neutral vs mid bots | **yes** |
+| Fund animals before lower-return seeds when cash is short | `ROI_ANIMAL_RESERVE=1` | −$20.1k at 30 seeds (vs v1 −$24.9k), own bank +$5k | **yes** |
+| Fertilize strawberries/tomatoes on production days | `FERTILIZE_CROPS` | −$28k…−$32k; worse vs every opponent (labor + lost fertilizer sales) | no (off) |
+| Strawberry staging (≤3–4 per animal, ≤4–6/day) | `STRAWBERRY_PER_ANIMAL`, `_PER_DAY` | −$29k…−$33k | no (off) |
+| Herd cap 8 cows / 6 sheep / 0 geese | `HERD_CAPS` | −$23.8k | no (off) |
+| Opening melon cap 9 | `OPENING_MELON_CAP` | −$20.6k (10 s), −$26.2k (30 s) | no (off) |
+| Land on schedule NE d5 / SW d8–10 (/SE d16) | `LAND_DAYS` | −$26k…−$31k | no (off) |
+| Crew 12, hire cap 144, animal cash reserve 50, 3 unplaced animals | various | all worse | no |
+
+**Candidate:** `agents/agrihand_v2.{py,cfg}` (= `main.py`/`config.py`; main sha256 `b4829109…76ae4ae`, config `9c14ff6e…29f`, bundle `0c08bbaf…f58e`). v1 frozen as `agents/agrihand_v1.{py,cfg}` (bundle `08e04338…93b0`).
+
+| Opponent | Games | W/L/T | Wilson 95% CI | Mean bank v2 / opp | Mean gap |
+|---|---|---|---|---|---|
+| **v1 (agrihand_v1)** | 80 (seeds 1–40) | 55/25/0 | [0.558, 0.787] on seeds 11–40 (41/19) | $86.9k / $84.7k (seeds 11–40) | +$2.2k (seeds 11–40) |
+| Seyamalam V21 (top-replay) | 60 | 2/58/0 | [0.009, 0.114] | $86.4k / $106.5k | −$20.1k |
+| Seyamalam `submission_v1` (mid) | 20 | 20/0/0 | [0.839, 1.000] | $95.9k / $25.0k | +$70.9k |
+| Seyamalam `candidate_v6` (mid) | 20 | 20/0/0 | [0.839, 1.000] | $114.1k / $33.7k | +$80.4k |
+| RM-050 live bot | 20 | 20/0/0 | [0.839, 1.000] | $111.7k / $28.6k | +$83.0k |
+| `starter` | 20 | 20/0/0 | [0.839, 1.000] | $131.1k / $3.5k | +$127.6k |
+
+**Decision: PROMOTE v2** (beats v1 head-to-head with LB > 0.50; no regression vs any other opponent). Gates: precheck OK, smoke --fast 9/0, micro_tests ALL PASS, smoke --animals 50/0 escapes, extracted-bundle self-play DONE/DONE.
+
+**Still open:** v2 loses to the top-replay bot by ~$20k/game. The biggest measured difference is timing (its strawberries sell from day 14, ours from day 20, because our NW field is full of melons until day 10), but the direct fixes (land schedule, melon cap, staging, fertilizing) all measured worse in our architecture. Next step if resumed: a joint re-tune of those levers together (they interact), evaluated on 30+ seeds.

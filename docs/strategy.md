@@ -2,7 +2,26 @@
 
 This file records *why* each policy choice exists. Numbers referenced here are the defaults in `config.py` — change tunables there, keep the reasoning here (TICKET-06).
 
-## v4 value-based rebuild (2026-09-30) — CURRENT
+## v2 additions (2026-09-30) — CURRENT (agrihand_v2)
+
+v2 = v1 below plus two techniques taken from studying the top public bots
+(evidence: docs/plan.md, 2026-09-30 v2 entry):
+
+- **Sell first (`SELL_FIRST`).** The engine processes both players' market
+  orders slot by slot, moving the price after every unit. Our sells go in the
+  first slots, most valuable first, so our units sell before the rival's
+  same-slot sales push the price down. Hires and buys follow in the same turn.
+- **Return-per-dollar funding (`ROI_ANIMAL_RESERVE`).** The crop plan ranks
+  crops by profit per *tile*-day, which is right when land is short. Early in
+  the season *cash* is short, and a cow returns ~23x its price vs ~7x for wheat
+  seed. A seed whose profit per dollar is below the wanted animal's now leaves
+  cash for one such animal.
+
+Researched but measured worse in this architecture, and left available as
+knobs set off: fertilizing strawberries, strawberry staging, fixed 8 cow / 6
+sheep herd caps, a 9-melon opening cap, and a fixed land schedule.
+
+## v4 value-based rebuild (2026-09-30) — v1 (agrihand_v1)
 
 The RM-0xx agents were fixed rules tuned against `starter`. The 2026-09-30 audit
 found the rules blind to prices, calendar and opponent (identical actions on
