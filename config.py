@@ -1,128 +1,150 @@
-"""Config.py — single source of truth for all tunable strategy constants (TICKET-06).
+"""config.py — every tunable number for the v4 value-based agent (TICKET-06).
 
-Imported by main.py and eval/tournament.py. Every constant carries a comment
-linking to the PLAN.md section / docs that justify it. No bare numeric literals
-in decision logic — change tunables here, keep the reasoning in docs/strategy.md.
+Imported by main.py. Two kinds of constants live here:
 
-Ships in the submission bundle (stdlib-only, no import concerns on the host).
+1. ENGINE TABLES — exact mirrors of kaggle_environments/envs/kaggriculture
+   (v1.32.6). They are facts, not knobs: change them only if the engine changes.
+2. STRATEGY KNOBS — the numbers the policy uses to turn "money in vs money
+   out" estimates into decisions. Rationale lives in docs/strategy.md
+   ("v4 value-based rebuild").
+
+Ships in the submission bundle next to main.py (stdlib-only).
 """
 from __future__ import annotations
 
-# --- Strategy phases (PLAN.md §3.3) -----------------------------------------
-# Land expansion: cash reserve kept before buying a quadrant (PLAN.md §3.3).
-CASH_RESERVE_BUFFER = 300
+# =============================================================================
+# 1. ENGINE TABLES (mirrors of the engine source — facts, not knobs)
+# =============================================================================
 
-# Quadrant #4 policy (TICKET-04/09/16, docs/strategy.md; RE-DERIVED RM-021):
-# buy only if day <= QUADRANT4_LATEST_DAY AND money >= QUADRANT4_CASH_THRESHOLD
-# AND post-purchase money >= QUADRANT4_RESERVE. Land order is pinned NE->SW->SE
-# (there is no skip-to-SE path), so "Q4" means owning the whole extra chain.
-# RM-021 re-derivation: the original $6,000 assumed NE/SW already owned
-# ($4,000 SE + $2,000 melon seed bill). The committed baseline owns nothing,
-# so the threshold is the full chain + seed bill: $1,000 + $2,000 + $4,000
-# land + $2,000 melon seeds = $9,000. Measured animals-baseline cash at day
-# 16 is ~$4.0–4.4k (6 seeds) — the gate is dormant at the v2 income
-# trajectory; the derived number stays so future income changes activate it
-# honestly instead of a gut-feel number.
-QUADRANT4_LATEST_DAY = 16
-QUADRANT4_CASH_THRESHOLD = 9000
-QUADRANT4_RESERVE = 1000
-QUADRANT4_CROP = "MELON"  # committed default per TICKET-16; None = Q4 disabled
+TURNS_PER_DAY = 24
+SEASON_DAYS = 30
+# The engine marks the episode DONE after processing step 718, so the action
+# chosen from the observation at step 718 is the last one that counts.
+LAST_ACTION_STEP = 718
 
-# --- Animals (PLAN.md §3.3 "Days 8–20") --------------------------------------
-# Keep wheat buffer >= (WHEAT_BUFFER_PER_ANIMAL * animals) + WHEAT_BUFFER_BASE.
-WHEAT_BUFFER_PER_ANIMAL = 2
-WHEAT_BUFFER_BASE = 5
+SHED_CAPACITY = 100
+MAX_MARKET_ORDERS = 10
+PRICE_FLOOR = 1
+MARKET_I0 = 10_000
 
-# RM-036: production-side wheat reserve. The sell buffer above protects shed
-# wheat from sales, but FEED drains it 1/day/animal — if the planted mix
-# drifts to premium crops (crop_spread), production can't replenish and the
-# animal starves even though the sell rule was never broken. When animals are
-# enabled and live wheat tiles drop below this floor, PLANT forces WHEAT.
-WHEAT_MIN_TILES = 6
+CROPS = {
+    "WHEAT":      {"seed": 10,  "first_yield_day": 2,  "max_yield_day": 4,  "interval": 0, "max_yield": 6, "ongoing": False},
+    "CARROT":     {"seed": 20,  "first_yield_day": 2,  "max_yield_day": 3,  "interval": 0, "max_yield": 4, "ongoing": False},
+    "TOMATO":     {"seed": 50,  "first_yield_day": 8,  "max_yield_day": 8,  "interval": 1, "max_yield": 4, "ongoing": True},
+    "STRAWBERRY": {"seed": 100, "first_yield_day": 10, "max_yield_day": 10, "interval": 2, "max_yield": 4, "ongoing": True},
+    "MELON":      {"seed": 80,  "first_yield_day": 10, "max_yield_day": 12, "interval": 0, "max_yield": 6, "ongoing": False},
+}
 
-# RM-050 diagnostic candidate (docs/rm050-total-rework-plan.md).
-SEED_STOCK_TARGET = 3
-ANIMAL_COSTS = {"GOOSE": 300, "COW": 400, "SHEEP": 500}
-ANIMAL_STRUCTURES = {"GOOSE": "COOP", "COW": "PASTURE", "SHEEP": "PASTURE"}
-ANIMAL_BUILD_ACTIONS = {"COOP": "BUILD_COOP", "PASTURE": "BUILD_PASTURE"}
-PRIMARY_ANIMAL = "COW"
-SECONDARY_ANIMAL = "SHEEP"
-TARGET_COWS = 8
-TARGET_SHEEP = 0
-FIRST_ANIMAL_DAY = 0
-FIRST_HERD_WHEAT_BRIDGE = WHEAT_BUFFER_BASE + WHEAT_BUFFER_PER_ANIMAL
-MAX_HANDS_PER_DAY = 12
-HANDS_BASE = 2
-HANDS_PER_ANIMAL = 1
-PLANTS_PER_HAND = 3
-WORKER_ZONE_COUNT = 5
-WORKER_CROSS_ZONE_PENALTY = 4
+ANIMALS = {
+    "GOOSE": {"cost": 300, "structure": "COOP",    "first_yield_day": 4, "interval": 1, "max_held": 4, "product": "EGG"},
+    "COW":   {"cost": 400, "structure": "PASTURE", "first_yield_day": 8, "interval": 2, "max_held": 6, "product": "MILK"},
+    "SHEEP": {"cost": 500, "structure": "PASTURE", "first_yield_day": 6, "interval": 3, "max_held": 6, "product": "WOOL"},
+}
+BUILD_OP = {"COOP": "BUILD_COOP", "PASTURE": "BUILD_PASTURE"}
 
-# --- Labor (PLAN.md §3.2/3.3) ------------------------------------------------
-# Hire a hand when standing-task count exceeds what the farmer alone can do.
-HIRE_THRESHOLD_TASKS = 5
+MARKET_PARAMS = {
+    "WHEAT":      {"base": 25,  "T": 400, "below_func": "sqrt",   "below_target": 0.80, "above_func": "log",    "above_target": 0.20},
+    "CARROT":     {"base": 35,  "T": 450, "below_func": "log",    "below_target": 0.20, "above_func": "sqrt",   "above_target": 0.70},
+    "TOMATO":     {"base": 60,  "T": 200, "below_func": "linear", "below_target": 0.40, "above_func": "sqrt",   "above_target": 0.60},
+    "STRAWBERRY": {"base": 120, "T": 100, "below_func": "sqrt",   "below_target": 0.70, "above_func": "linear", "above_target": 1.60},
+    "MELON":      {"base": 250, "T": 300, "below_func": "log",    "below_target": 0.20, "above_func": "sq",     "above_target": 3.60},
+    "EGG":        {"base": 50,  "T": 332, "below_func": "linear", "below_target": 0.40, "above_func": "log",    "above_target": 0.20},
+    "MILK":       {"base": 160, "T": 122, "below_func": "sqrt",   "below_target": 0.60, "above_func": "linear", "above_target": 1.60},
+    "WOOL":       {"base": 200, "T": 105, "below_func": "log",    "below_target": 0.20, "above_func": "sq",     "above_target": 3.20},
+    "FERTILIZER": {"base": 100, "T": 200, "below_func": "linear", "below_target": 0.40, "above_func": "linear", "above_target": 0.40},
+}
 
-# --- Market / sale policy (PLAN.md §3.4) -------------------------------------
-# Sell window: first turns after a town-consumption tick (prices highest).
-SELL_WINDOW_TICKS = 2
-# Buy FERTILIZER only below this price (and only in melon/tomato season).
-FERTILIZER_BUY_MAX_PRICE = 120
+# Town demand: every shop instance pulls 1 of each product per shop tick
+# (2 if it sells a single product); the town center pulls 1 of every
+# non-fertilizer product once per day. Shops unlock every 3 days, max 8.
+SHOPS = {
+    "BAKERY":         ["EGG", "WHEAT"],
+    "PIZZA_SHOP":     ["MILK", "TOMATO", "WHEAT"],
+    "BRUNCH_SPOT":    ["EGG", "WHEAT", "STRAWBERRY"],
+    "YARN_STORE":     ["WOOL"],
+    "ICE_CREAM_SHOP": ["STRAWBERRY", "MILK", "WHEAT"],
+    "PET_CAFE":       ["CARROT"],
+    "SMOOTHIE_SHOP":  ["STRAWBERRY", "MILK"],
+    "FARMERS_MARKET": ["WHEAT", "CARROT", "TOMATO", "STRAWBERRY"],
+}
+SHOP_TICKS_PER_DAY = TURNS_PER_DAY // 4
+SHOP_UNLOCK_INTERVAL_DAYS = 3
+MAX_SHOPS = 8
 
-
-# --- Compute budget (PLAN.md §3.5, TICKET-03) --------------------------------
-# Cap BFS search radius (half-board); keep worst-case turn < ~100ms.
-BFS_MAX_STEPS = 16
-
-# --- Stretch goal (TICKET-05) ------------------------------------------------
-# Opponent-aware premium sale timing. Default OFF; validated ON-vs-OFF in
-# tournament before any promotion. Date-scoped Aug 25–Sep 10 (PLAN.md §6).
-OPPONENT_AWARE_SELL_TIMING = False
-
-# --- Engine constants (mirror kaggle_environments; kept here for tuning) -----
-# Land order + prices (pinned by the engine; PLAN.md §3.3, rules-notes.md).
 LAND_ORDER = ["NE", "SW", "SE"]
 LAND_PRICES = [1000, 2000, 4000]
 
-# NOTE (M7, verified 2026-08-12): there is NO mid-day cap on carried inventory.
-# Units can hold unlimited items; the only constraint is shed capacity (host
-# shedCapacity=100), enforced at DROP / PLACE-deposit / end-of-day auto-drop
-# (overflow discarded). Do NOT add a per-unit cap assumption here — TICKET-07's
-# "stockpiling does not bypass the cap" premise was overturned by the engine.
-SHED_CAPACITY = 100  # host default; mirror for policy planning only
+# =============================================================================
+# 2. STRATEGY KNOBS (docs/strategy.md "v4 value-based rebuild")
+# =============================================================================
 
-# Seed costs (engine CROPS table; docs/findings.md M-rows).
-SEED_COSTS = {"WHEAT": 10, "CARROT": 20, "TOMATO": 50, "STRAWBERRY": 100, "MELON": 80}
+# --- Worker routing -----------------------------------------------------------
+# A job is scored value / (turns to reach it + 1): dollars earned per turn a
+# worker spends on it. Keeping last turn's target gets this multiplier so
+# workers don't flip between two similar jobs and walk in circles.
+STICKY_BONUS = 1.3
+# Every action a worker takes is charged this much when deciding whether a
+# crop/animal is worth it (hands cost money and could be doing something else).
+LABOR_COST_PER_ACTION = 4.0
 
-# Crop growth windows (engine CROPS table; docs/findings.md M-rows). Needed by
-# main.py's harvest gate — no bare literals in decision logic (TICKET-06).
-# first_yield_day: earliest day HARVEST succeeds; max_yield_day: single-yield
-# crops expire; ongoing: re-yields every `interval` days after first_yield_day.
-CROPS = {
-    "WHEAT":      {"first_yield_day": 2, "max_yield_day": 4, "interval": 0, "ongoing": False},
-    "CARROT":     {"first_yield_day": 2, "max_yield_day": 3, "interval": 0, "ongoing": False},
-    "TOMATO":     {"first_yield_day": 8, "max_yield_day": 8, "interval": 1, "ongoing": True},
-    "STRAWBERRY": {"first_yield_day": 10, "max_yield_day": 10, "interval": 2, "ongoing": True},
-    "MELON":      {"first_yield_day": 10, "max_yield_day": 12, "interval": 0, "ongoing": False},
-}
+# --- Job values (dollars) -----------------------------------------------------
+# Feeding: an unfed animal escapes after its 2nd unfed night and is gone for good.
+FEED_VALUE_DANGER = 2500     # would escape tonight if not fed (animal + its future output lost)
+FEED_VALUE_NORMAL = 900      # also required for the care bonus to count
+CARE_UNFED_FRACTION = 0.25   # care before feeding only pays if the feed happens later today
+PLACE_VALUE = 1200           # an animal waiting in the shed is paid for but produces nothing
+BUILD_VALUE = 400            # structure for an animal we have decided to buy
+WATER_KEEP_ALIVE_MIN = 40    # floor on the value of saving a plant tonight
+WATER_ROUTINE_VALUE = 3      # watering a safe plant with no yield gain (prevents tomorrow's emergency)
+DIG_MIN_VALUE = 15
+# Fraction of the carried-goods total at which a mid-day drop is forced, so the
+# end-of-day auto-drop never overflows the shed (overflow is deleted).
+SHED_SAFE_FILL = 80
 
-# Price-curve constants for the market-price function (docs/findings.md M9a/M9b).
-MARKET_I0 = 10_000
-# Floor below which no market price drops (engine PRICE_FLOOR; findings M10).
-PRICE_FLOOR = 1
+# --- Planning horizon / projections -------------------------------------------
+# Opponent production is projected from their visible farm but trusted less
+# than our own (they may hold, sell late, or let things die).
+OPPONENT_SUPPLY_WEIGHT = 0.7
+# Expected care bonus per animal production (we care daily; cap at interval).
+CARE_ENABLED = True
 
-# Full price model per resource (docs/findings.md §4 M9a/M9b + micro_tests.py).
-# Mirrors the engine's MARKET_PARAMS exactly: price(inv) = base + sign*amp*f(|inv-I0|),
-# amp = target*base/f(T), sign +1 below I0 (scarcity) / -1 above (glut).
-# Single source of truth for main.py's floor-price logic (RM-018) — change here,
-# not in micro_tests.py. Verified against the engine 2026-08-12 (M9a/M9b ✅).
-MARKET_PARAMS = {
-    "WHEAT":       {"base": 25,  "T": 400,  "below_func": "sqrt",   "below_target": 0.80, "above_func": "log",    "above_target": 0.20},
-    "CARROT":      {"base": 35,  "T": 450,  "below_func": "log",    "below_target": 0.20, "above_func": "sqrt",   "above_target": 0.70},
-    "TOMATO":      {"base": 60,  "T": 200,  "below_func": "linear", "below_target": 0.40, "above_func": "sqrt",   "above_target": 0.60},
-    "STRAWBERRY":  {"base": 120, "T": 100,  "below_func": "sqrt",   "below_target": 0.70, "above_func": "linear", "above_target": 1.60},
-    "MELON":       {"base": 250, "T": 300,  "below_func": "log",    "below_target": 0.20, "above_func": "sq",     "above_target": 3.60},
-    "EGG":         {"base": 50,  "T": 332,  "below_func": "linear", "below_target": 0.40, "above_func": "log",    "above_target": 0.20},
-    "MILK":        {"base": 160, "T": 122,  "below_func": "sqrt",   "below_target": 0.60, "above_func": "linear", "above_target": 1.60},
-    "WOOL":        {"base": 200, "T": 105,  "below_func": "log",    "below_target": 0.20, "above_func": "sq",     "above_target": 3.20},
-    "FERTILIZER":  {"base": 100, "T": 200,  "below_func": "linear", "below_target": 0.40, "above_func": "linear", "above_target": 0.40},
-}
+# --- Crops -------------------------------------------------------------------
+# Watering actions per crop cycle are charged as labor. Crops are planted only if
+# the harvest lands by this day (the last day is for harvest + drop + sell).
+LAST_HARVEST_DAY = 29
+LAST_HARVEST_HOUR = 20       # on the final day, harvest only until this hour
+MIN_CROP_PROFIT = 5.0        # below this a tile is better left for later
+
+# --- Animals -----------------------------------------------------------------
+ANIMAL_MIN_PROFIT = 150      # expected season profit an animal must clear
+ANIMAL_LABOR_ACTIONS = 4.5   # feed + care + collect + harvest + wheat logistics / day
+MAX_ANIMALS = 30             # hard safety cap
+MAX_UNPLACED_ANIMALS = 2     # don't buy more while this many still wait to be placed
+# Wheat kept on hand for feeding: animals * PER + BASE (buy below, never sell below).
+FEED_RESERVE_PER_ANIMAL = 2
+FEED_RESERVE_BASE = 2
+
+# --- Cash --------------------------------------------------------------------
+CASH_RESERVE = 150           # never spend the last of this on seeds/animals/land
+ANIMAL_CASH_RESERVE = 250    # extra cushion before an animal purchase
+
+# --- Hiring ------------------------------------------------------------------
+# Unit-turns needed per job (action + average walk). Used to size the crew.
+TURNS_PER_JOB = 3.0
+# Never pay more than this for a single hire (fib costs 1,1,2,3,5,8,13,21,34,55,89,...).
+MAX_HIRE_COST = 89
+# Only hire a hand if it is expected to do at least this much value per day
+# more than its hire price.
+HIRE_VALUE_PER_JOB = 25
+
+# --- Land --------------------------------------------------------------------
+LAND_LAST_DAY = 18           # later purchases can't pay back
+LAND_ROI = 2.0               # projected value of the new quadrant must beat price * ROI
+LAND_UTILIZATION = 0.5       # fraction of the ideal crop value we expect to realise
+LAND_FREE_TILE_TRIGGER = 3   # only buy when we have at most this many free tiles
+
+# --- Selling -----------------------------------------------------------------
+# Hold a product (don't sell) while its price is below this fraction of base
+# AND there are more than SELL_HOLD_DAYS_LEFT days left AND the shed has room.
+SELL_HOLD_FRACTION = 0.0
+SELL_HOLD_DAYS_LEFT = 3
