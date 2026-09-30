@@ -68,9 +68,11 @@ def _escape_events(steps) -> list[tuple[int, int, str]]:
 def _run_animals_gate() -> int:
     """RM-020 hard gate: zero animal escapes across 50 animal-enabled episodes.
 
-    Runs main.py with ANIMALS_ENABLED=True vs `pass` and fails loudly on any
-    escape or non-clean episode. Uses a lambda so the committed default
-    (animals OFF) is not mutated; the submission still ships dormant-safe.
+    Runs main.py's agent (called with the engine's own (obs, configuration)
+    arguments) vs `pass` and fails loudly on any escape or non-clean episode.
+    An earlier version wrapped the agent in a lambda whose 2nd parameter caught
+    the configuration, so the agent crashed on turn 1 of every episode and the
+    gate reported "0 escapes" without ever running an animal.
     """
     import importlib.util
 
@@ -87,7 +89,7 @@ def _run_animals_gate() -> int:
             configuration={"episodeSteps": 720, "seed": ep + 1},
             debug=False,
         )
-        env.run([lambda obs, m=mod: m.agent(obs, animals_enabled=True), "pass"])
+        env.run([mod.agent, "pass"])  # engine passes (obs, configuration)
         events = _escape_events(env.steps)
         if events:
             escapes += 1

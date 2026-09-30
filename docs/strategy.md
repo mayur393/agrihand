@@ -2,6 +2,64 @@
 
 This file records *why* each policy choice exists. Numbers referenced here are the defaults in `config.py` — change tunables there, keep the reasoning here (TICKET-06).
 
+## v4 value-based rebuild (2026-09-30) — CURRENT
+
+The RM-0xx agents were fixed rules tuned against `starter`. The 2026-09-30 audit
+found the rules blind to prices, calendar and opponent (identical actions on
+two seeds whose outcomes differed by $17k), a feed bug that let 7–9 cows escape
+per game, and routing where only ~25% of worker-turns did work. v4 replaces the
+rules with one question asked of every use of money, land and labor: *how many
+dollars does this return before the season ends, at the price the market will
+actually pay?* Everything below lives in `main.py`; every number is in
+`config.py`.
+
+**Market model.** `price_at()` is the engine's price curve (asserted equal in
+`eval/micro_tests.py`). `Market.projected_price(product, t, extra)` projects
+market inventory `t` days ahead: current inventory + our stock + our visible
+future production + `OPPONENT_SUPPLY_WEIGHT` × the rival's visible future
+production + our planned extra units − town demand (unlocked shops, the town
+center, and the expected demand of shops still to unlock, scaled by
+`DEMAND_WEIGHT`).
+
+**Crops.** For each free tile, every crop is scored as profit per tile-day:
+units at its best harvest age × projected price − seed − labor. The plan is
+built greedily one tile at a time, and each pick adds its units to the
+projection, so the planner stops planting melons once melons would glut. A
+crop that cannot be harvested by the last day is never planted.
+
+**Animals.** Each animal type is scored as season profit: product units (with
+the daily care bonus) × projected price + fertilizer − feed − labor − purchase
+price. The best one is bought only when it clears `ANIMAL_MIN_PROFIT`, a
+structure is ready or being built, and no more than `MAX_UNPLACED_ANIMALS` are
+waiting. Feed wheat is topped up every turn to `FEED_RESERVE_PER_ANIMAL` × herd
+(the RM-050 bug bought feed only while the herd was growing).
+
+**Selling (demand-matched).** A product sells only while the next unit still
+fetches `SELL_RESERVE_FRACTION` × its base price; the rest waits in the shed for
+the town to drain the market. Everything sells when the shed nears
+`SELL_PRESSURE_FILL` or in the last `SELL_ALL_DAYS_LEFT` day(s). Selling at full
+base (1.0) tested worse: the rival fills the market while we wait.
+
+**Crew and land.** The crew is sized from today's job load with a floor of
+`MIN_CREW` from day `MIN_CREW_FROM_DAY`, never paying more than
+`MAX_HIRE_COST` for one hire. Hires are ordered in bulk at the start of the day
+(the old agent hired one per turn). The next quadrant is bought when free tiles
+run out and the projected value of its 25 tiles beats `LAND_ROI` × price.
+
+**Routing.** Every tile task is a job worth dollars (saving a plant = its crop
+value; feeding = `FEED_VALUE_*`, because an unfed animal escapes after its 2nd
+night; care only fully counts once the animal has eaten). Workers are matched
+greedily by value ÷ (turns to reach it + 1) ^ `DIST_EXPONENT`, so urgency and
+distance are traded off in dollars rather than distance always winning. A job
+needing an item (wheat to feed, an animal to place) includes the shed detour in
+its distance. Harvesters don't walk to the shed: carried goods auto-drop at day
+end, and a drop job appears only when the shed could overflow or on the last day.
+
+**Win/loss-first check (TICKET-08).** All knob choices were made on win rate
+and mean paired *gap* (our bank − rival bank) against three opponents: the
+public top-replay bot (Seyamalam V21, strongest available), the previous live
+bot (RM-050), and `starter`. Evidence and numbers: `docs/plan.md`, 2026-09-30.
+
 ## Win/loss-first principle cross-check (TICKET-08)
 
 Principle (from PLAN.md §1): *Prioritize reliably beating whoever we're matched against over maximizing absolute coin margin — a defensive agent that wins by $1 outranks a volatile one that sometimes wins big and sometimes collapses.*

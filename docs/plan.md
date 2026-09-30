@@ -406,3 +406,21 @@ Format: `YYYY-MM-DD | candidate (hash) | opponent | games | win rate | Wilson 95
 **Competitive impact:** we win 100% against starter regardless of seed. The variance affects absolute income but not win rate against this opponent.
 
 **Promoted:** RM-050 + batch-PICKUP as the new baseline. Archived as agents/rm050_rework_batch_pickup.{py,cfg}. Submitted to Kaggle ladder (submission 55715426, pending). Previous active submission: 55695932 (score 436.7).
+
+## 2026-09-30 — v4 value-based rebuild — PROMOTED + bundled for the final-day submission
+
+**Why:** the 2026-09-30 audit found the RM-050 live bot blind to prices/calendar/opponent, losing 7–9 cows per game to a feed bug (hidden by a broken `smoke.py --animals` gate that crashed the agent on turn 1), and only ~25% of worker-turns doing work. v4 is a rewrite: every decision is scored in projected dollars (design: `docs/strategy.md`, "v4 value-based rebuild").
+
+**Candidate:** `agents/v4_value_based.{py,cfg}` (= `main.py`/`config.py`; main sha256 `11b57623…67ef`, config `21894a3a…d4d2`, bundle `08e04338…93b0`). Engine 1.32.6. Paired, seat-swapped games (both seats per seed), seeds 1–N.
+
+| Opponent | Games | W/L/T | Wilson 95% CI | Mean bank v4 / opp | Mean gap |
+|---|---|---|---|---|---|
+| RM-050 live bot (`agents/rm050_rework_batch_pickup`) | 12 | 12/0/0 | [0.757, 1.000] | $84.5k / $31.2k | +$53.3k |
+| `starter` | 12 | 12/0/0 | [0.757, 1.000] | $124.6k / $3.5k | +$121.1k |
+| Seyamalam `submission_v1` (mid-strength) | 12 | 12/0/0 | [0.757, 1.000] | $105.0k / — | +$78.5k |
+| Seyamalam `candidate_v6_adaptive_livestock` (mid) | 12 | 12/0/0 | [0.757, 1.000] | $115.4k / — | +$80.8k |
+| Seyamalam V21 `main.py` (public top-replay, ~2053 rated) | 20 | 0/20/0 | [0.000, 0.161] | — | −$20.7k |
+
+**Decision: PROMOTE** (LB > 0.50 vs the live bot, `starter` and both mid-strength bots). **Known gap:** loses every game to the public top-replay bot (V21), by ~$20k. Tuning route vs V21 (mean gap, 10 seeds): first build −$31.3k (seeds 1–10) → +day-0 animal buy while pasture is built → demand-matched selling (reserve 0.8×base) → `MIN_CREW=8` −$26.7k → `OPENING_ANIMALS=3` + `OPPONENT_SUPPLY_WEIGHT=1.0` −$20.7k. Tested and rejected (no gain beyond noise or worse): labor cost 2/8, animal min profit 0/600, max animals 16, sell reserve 0.6/0.7/0.9/1.0, land ROI 1.0, land free-tile trigger 8, sticky 1.0/1.6, demand-weighted seed reserve (all game), crew 6/10/12, turns-per-job 4.5, max hire cost 144.
+
+**Gates:** `precheck_submission.py` OK; `check_findings.py` OK; `smoke.py --fast` 9/0; `micro_tests.py` ALL PASS (stale RM-019/021/012/008 agent tests replaced by v4 checks: price model == engine, no overplanting, animals placed, no escapes); extracted-bundle self-play via file path: both DONE. `smoke.py --animals` lambda bug fixed (the agent is now called with the engine's own arguments).

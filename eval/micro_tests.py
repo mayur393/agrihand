@@ -224,86 +224,6 @@ def test_price_floor():
     assert private["shed"]["WHEAT"] == 2 and farm["money"] == 3001, "M10: unit sold at floor"
 
 
-def test_v1_shed_room_aware_harvest():
-    """RM-012 M7 acceptance: v1's harvest is shed-room-aware — no silent overflow discard.
-
-    Set the shed nearly full, put the farmer on a mature plant with yield that
-    exceeds shed room, and confirm the v1 agent does NOT harvest (which would
-    lose the excess at end-of-day). Instead it must DROP/PASS. This guards the
-    exact M7 behavior the strategy depends on.
-    """
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    import main as v1
-
-    obs = {
-        "player": 0,
-        "day": 3,
-        "hour": 0,
-        "farms": [{
-            "money": 3000.0,
-            "tiles": [[None] * 10 for _ in range(10)],
-            "farmer": [4, 4],
-            "hands": [],
-            "unlocked_quadrants": ["NW"],
-            "hires_today": 0,
-        }],
-        "private": {
-            "shed": {"WHEAT": 99, "CARROT": 0},  # 99/100 full -> 1 room
-            "seeds": {"WHEAT": 1, "CARROT": 1},
-            "inventories": [{"WHEAT": 2}],  # carrying some
-        },
-        "market": {"inventory": {}, "prices": {"WHEAT": 20, "CARROT": 25}},
-        "town": {"unlocked_shops": []},
-    }
-    # mature wheat with yield 4 on the farmer's tile
-    obs["farms"][0]["tiles"][4][4] = {
-        "kind": "PLANT", "crop": "WHEAT", "planted_day": 0,
-        "watered_today": True, "yield_units": 4, "consecutive_unwatered": 0,
-        "max_lifespan_step": 1000, "fertilized_until_day": -1,
-    }
-    action = v1.agent(obs)
-    farmer_act = action["farmer"][0]
-    # shed room is 1 < yield 4 -> must NOT harvest; farmer is shed-adjacent and
-    # carrying -> DROP (makes room), never HARVEST
-    assert farmer_act != "HARVEST", (
-        f"RM-012 M7: harvested with shed room 1 < yield 4 — overflow would be "
-        f"discarded at end-of-day. action={farmer_act}"
-    )
-    assert farmer_act == "DROP", f"RM-012 M7: expected DROP to make room, got {farmer_act}"
-
-
-def test_bfs_max_steps_cap():
-    """RM-014: BFS respects BFS_MAX_STEPS — a target beyond the cap is not found
-    (graceful fallback, no infinite/expensive search), and one within it is."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    import main as v1
-
-    board_size = 10
-    tiles = [[None] * board_size for _ in range(board_size)]
-    # target far corner (9,9); start at (4,4) — Manhattan distance 10 > cap 4
-    far_target = (9, 9)
-
-    # within cap (distance 2) -> found
-    found_near = v1._bfs_nearest((4, 4), tiles, board_size,
-                                 lambda x, y: (x, y) == (6, 4), max_steps=4)
-    assert found_near == (6, 4), f"RM-014: BFS should find near target, got {found_near}"
-
-    # beyond cap (distance 10 > max_steps=4) -> None (graceful, no crash)
-    found_far = v1._bfs_nearest((4, 4), tiles, board_size,
-                                lambda x, y: (x, y) == far_target, max_steps=4)
-    assert found_far is None, f"RM-014: BFS must respect max_steps cap, got {found_far}"
-
-    # default cap (BFS_MAX_STEPS=16) still finds the corner from center
-    found_default = v1._bfs_nearest((4, 4), tiles, board_size,
-                                    lambda x, y: (x, y) == far_target)
-    assert found_default == far_target, f"RM-014: default cap should reach corner, got {found_default}"
-
-    # start-tile is a candidate (distance 0)
-    found_start = v1._bfs_nearest((4, 4), tiles, board_size,
-                                  lambda x, y: (x, y) == (4, 4), max_steps=4)
-    assert found_start == (4, 4), f"RM-014: BFS must consider start tile (distance 0), got {found_start}"
-
-
 def test_price_function_below():
     """M9a (TICKET-11): below-target side reproduces P(I0-T) for all 9 resources."""
     for r, (p_neg, _, _) in EXPECTED.items():
@@ -333,97 +253,49 @@ def main() -> None:
     test_price_function_below()
     test_price_function_above()
     test_price_floor()
-    test_v1_shed_room_aware_harvest()
-    test_bfs_max_steps_cap()
-    test_goose_place_pipeline()
-    test_q4_land_gate()
+    test_v4_price_model_matches_engine()
+    test_v4_full_season_safety()
     print("micro_tests: ALL PASS")
 
 
-def test_q4_land_gate():
-    """RM-021: the Q4 BUY_LAND gate fires only under day<=16 AND money>=9000
-    AND post-purchase reserve>=1000 (re-derived threshold), and Q4-only mix
-    adds MELON once the full chain is owned."""
-    import sys
-    from pathlib import Path
+def test_v4_price_model_matches_engine():
+    """v4: main.price_at() must equal the engine's market_price() everywhere we use it."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    import main as v1
-    import config
-
-    # Crafted rich farm: day 15, $10k, unlocked_quadrants=['NW'].
-    # Gate should fire (money 10000 >= 9000, post-purchase 9000 >= 1000).
-    me = {
-        "money": 10000.0,
-        "unlocked_quadrants": ["NW"],
-        "hires_today": 0,
-    }
-    private = {"shed": {}, "seeds": {}, "inventories": [{}]}
-    market = {"prices": {}, "inventory": {}}
-    orders = v1._market_orders(
-        me, private, market, day=15, step=0,
-        buy_land=True, hire_hands=False, board_size=10,
-        crop_mix=("WHEAT", "CARROT"), timed_sell=False, animals_enabled=False,
-    )
-    assert any(o and o[0] == "BUY_LAND" for o in orders), \
-        "RM-021: Q4 gate must fire at day 15 / $10k (BUY_LAND missing)"
-
-    # Day 17 with same money: gate must NOT fire (day > QUADRANT4_LATEST_DAY).
-    orders17 = v1._market_orders(
-        me, private, market, day=17, step=0,
-        buy_land=True, hire_hands=False, board_size=10,
-        crop_mix=("WHEAT", "CARROT"), timed_sell=False, animals_enabled=False,
-    )
-    assert not any(o and o[0] == "BUY_LAND" for o in orders17), \
-        "RM-021: Q4 gate must not fire after day 16"
-
-    # Money below threshold: must NOT fire.
-    me_poor = dict(me, money=5000.0)
-    orders_poor = v1._market_orders(
-        me_poor, private, market, day=15, step=0,
-        buy_land=True, hire_hands=False, board_size=10,
-        crop_mix=("WHEAT", "CARROT"), timed_sell=False, animals_enabled=False,
-    )
-    assert not any(o and o[0] == "BUY_LAND" for o in orders_poor), \
-        "RM-021: Q4 gate must not fire below the cash threshold"
-
-    # Q4 chain fully owned: mix must include MELON.
-    me_owned = {"unlocked_quadrants": ["NW", "NE", "SW", "SE"]}
-    mix = v1._effective_crop_mix(me_owned, ("WHEAT", "CARROT"), q4_enabled=True)
-    assert mix == ("WHEAT", "CARROT", "MELON"), \
-        f"RM-021: Q4 mix must be wheat/carrot+melon, got {mix}"
-
-    # Chain not owned: mix unchanged.
-    mix_partial = v1._effective_crop_mix(
-        {"unlocked_quadrants": ["NW", "NE"]}, ("WHEAT", "CARROT"), q4_enabled=True
-    )
-    assert mix_partial == ("WHEAT", "CARROT"), \
-        f"RM-021: Q4 mix must not add melon before the chain completes, got {mix_partial}"
+    import main as agent_mod
+    for item in eng.MARKET_PARAMS:
+        for inv in range(eng.MARKET_I0 - 1500, eng.MARKET_I0 + 1500, 7):
+            assert agent_mod.price_at(item, inv) == eng.market_price(item, inv), (item, inv)
 
 
-def test_goose_place_pipeline():
-    """RM-019: with animals enabled, the buy->build->place pipeline lands a goose
-    on a coop (mechanically works, no feeding/economics at this scope)."""
-    import sys
-    from pathlib import Path
+def test_v4_full_season_safety():
+    """v4: over full seasons, PLANT never exceeds seeds held (engine drops ALL plants
+    of that crop otherwise), animals get placed, none escape, and money grows."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    import main as v1
+    import main as agent_mod
     from kaggle_environments import make
 
-    env = make("kaggriculture", configuration={"episodeSteps": 720, "seed": 1}, debug=True)
-    env.run([lambda obs: v1.agent(obs, animals_enabled=True), "pass"])
-
-    found = False
-    for st in env.steps:
-        for row in st[0].observation["farms"][0]["tiles"]:
-            for t in row:
-                if isinstance(t, dict) and t.get("kind") == "COOP" and "animal" in t:
-                    found = True
-                    break
-            if found:
-                break
-        if found:
-            break
-    assert found, "RM-019: goose never landed on a coop (buy->build->place pipeline failed)"
+    for seed in (1, 2):
+        env = make("kaggriculture", configuration={"episodeSteps": 720, "seed": seed}, debug=True)
+        env.run([agent_mod.agent, "starter"])
+        placed = 0
+        prev = set()
+        for i, st in enumerate(env.steps[1:], 1):
+            obs = env.steps[i - 1][0].observation
+            act = st[0].action
+            demand = {}
+            for a in [act["farmer"], *act["hands"]]:
+                if a[0] == "PLANT":
+                    demand[a[1]] = demand.get(a[1], 0) + 1
+            for crop, n in demand.items():
+                assert n <= obs["private"]["seeds"].get(crop, 0), f"seed {seed} step {i}: overplant {crop}"
+            cur = {(x, y) for y, row in enumerate(st[0].observation["farms"][0]["tiles"])
+                   for x, t in enumerate(row) if isinstance(t, dict) and "animal" in t}
+            placed = max(placed, len(cur))
+            assert not (prev - cur), f"seed {seed} step {i}: animal escaped at {prev - cur}"
+            prev = cur
+        assert placed > 0, f"seed {seed}: no animal was ever placed"
+        final = env.steps[-1][0].observation["farms"][0]["money"]
+        assert final > 3000, f"seed {seed}: ended with {final}"
 
 
 if __name__ == "__main__":
